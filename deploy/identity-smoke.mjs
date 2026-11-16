@@ -21,6 +21,8 @@ const password = randomUUID();
 const clientSecret = randomUUID();
 const keycloakImage = 'quay.io/keycloak/keycloak@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0';
 const proxyImage = 'caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0';
+const argumentsList = process.argv.slice(2);
+const image = argumentsList.find(argument => !argument.startsWith('--')) ?? 'flex-alchemy:staging';
 
 function docker(args, options = {}) {
   const result = spawnSync('docker', args, { timeout: 90_000, maxBuffer: 4 * 1024 * 1024, ...options });
@@ -151,7 +153,7 @@ try {
     '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
     '--mount', 'type=bind,source=' + trust + ',target=/runtime-ca.pem,readonly', '-e', 'NODE_EXTRA_CA_CERTS=/runtime-ca.pem',
     '-e', 'DATABASE_URL', '-e', 'ALCHEMY_PUBLIC_ORIGIN', '-e', 'OIDC_ISSUER', '-e', 'OIDC_CLIENT_ID=alchemy',
-    '-e', 'OIDC_CLIENT_SECRET', process.argv[2] ?? 'flex-alchemy:staging'],
+    '-e', 'OIDC_CLIENT_SECRET', image],
   { env: { ...process.env, DATABASE_URL: 'postgresql://alchemy_smoke:' + password + '@pg.alchemy.test/postgres',
     ALCHEMY_PUBLIC_ORIGIN: origin, OIDC_ISSUER: issuer, OIDC_CLIENT_SECRET: clientSecret } });
   await eventually(async () => (await exchange(origin + '/health/ready', cert)).status === 200, 'Flex Alchemy readiness');
@@ -168,6 +170,10 @@ try {
   assert.equal((await exchange(origin + '/sign-out', cert, founder, {})).status, 303);
   assert.equal((await exchange(workspace, cert, founder)).status, 303);
   console.log('TLS proxy, real Keycloak sign-in, workspace creation, tenant denial, and sign-out passed.');
+  if (argumentsList.includes('--browser')) {
+    const { checkIdentityBrowser } = await import('./browser-smoke.mjs');
+    await checkIdentityBrowser({ origin, identityOrigin, ca: cert, password });
+  }
 } finally {
   for (const container of [app, keycloak, database, edge]) spawnSync('docker', ['stop', container], { timeout: 10_000 });
   spawnSync('docker', ['network', 'rm', namespace], { timeout: 10_000 });

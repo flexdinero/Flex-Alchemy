@@ -108,6 +108,7 @@ ${navigation(path, workspace, signedIn)}
 <div class="workspace-body"><header class="workspace-topbar"><span>Workspace</span><span aria-hidden="true">›</span><strong>${escapeHtml(title)}</strong></header>
 <main id="main" tabindex="-1"><h1>Flex Alchemy</h1>${project ? projectNavigation(path, project) : ''}${content}</main></div></body></html>`, { status, headers: {
     'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+    'Referrer-Policy': 'same-origin',
     'Content-Security-Policy': "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   } });
 }

@@ -12,7 +12,9 @@
     "provision:workspace": "node db/provision-workspace.mjs"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.3.14"
+    "@axe-core/playwright": "4.14.0",
+    "@electric-sql/pglite": "0.3.14",
+    "playwright": "1.65.1"
   },
   "dependencies": {
     "openid-client": "6.8.1",

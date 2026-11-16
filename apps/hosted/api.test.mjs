@@ -284,8 +284,10 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.match((await visit('/', founderHeaders)).body, /href="\/workspaces\/new"/);
       const setup = await visit('/workspaces/new', founderHeaders);
       assert.equal(setup.status, 200);
+      assert.equal(setup.headers['referrer-policy'], 'same-origin');
       const workspaceRequest = setup.body.match(/name="request" value="([^"]+)"/)[1];
       const createWorkspace = name => new URLSearchParams({ name, request: workspaceRequest }).toString();
+      assert.equal((await visit('/workspaces/new', { ...founderHeaders, Origin: 'null' }, createWorkspace('Denied'))).status, 403);
       assert.equal((await visit('/workspaces/new', founderHeaders, createWorkspace(' '))).status, 400);
       const createdWorkspace = await visit('/workspaces/new', founderHeaders, createWorkspace('Self-serve <workspace>'));
       assert.equal(createdWorkspace.status, 303);
