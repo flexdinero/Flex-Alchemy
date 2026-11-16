@@ -1,0 +1,85 @@
+[
+  [
+    "What did the founder decide about building this as its own business?",
+    [],
+    [
+      "A01",
+      "P01"
+    ]
+  ],
+  [
+    "Can we build the proof of concept inside CampaignOS?",
+    [],
+    [
+      "A01",
+      "P01"
+    ]
+  ],
+  [
+    "How can a blind visitor complete the form with speech output?",
+    [
+      "K12"
+    ],
+    []
+  ],
+  [
+    "How do we verify it works without a mouse?",
+    [
+      "K12"
+    ],
+    []
+  ],
+  [
+    "Can we stop a signed-in organization from reading rows belonging to a different organization?",
+    [
+      "K14"
+    ],
+    []
+  ],
+  [
+    "What governs PostgreSQL row-level security?",
+    [
+      "K14"
+    ],
+    []
+  ],
+  [
+    "Which spec describes status codes and response schemas?",
+    [
+      "K21"
+    ],
+    []
+  ],
+  [
+    "How do we specify the request body for this endpoint?",
+    [
+      "K21"
+    ],
+    []
+  ],
+  [
+    "What test checks whether independent builds produce identical files?",
+    [
+      "K23"
+    ],
+    []
+  ],
+  [
+    "What is our production database password?",
+    [],
+    []
+  ],
+  [
+    "What is Alchemy's measured paid conversion rate?",
+    [],
+    []
+  ],
+  [
+    "Can we measure completion rate and check the experience with a keyboard?",
+    [
+      "K22",
+      "K12"
+    ],
+    []
+  ]
+]

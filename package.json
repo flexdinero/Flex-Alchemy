@@ -1,0 +1,21 @@
+{
+  "name": "flex-alchemy",
+  "private": true,
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "start:local": "node apps/local/server.mjs",
+    "start:hosted": "node apps/hosted/server.mjs",
+    "migrate:hosted": "node db/migrate.mjs",
+    "provision:workspace": "node db/provision-workspace.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14"
+  },
+  "dependencies": {
+    "openid-client": "6.8.1",
+    "pg": "8.16.3"
+  }
+}
