@@ -51,3 +51,22 @@ jobs:
             docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d alchemy_test < "$migration"
           done
           docker exec -i "$POSTGRES_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d alchemy_test < db/workspace-boundary.test.sql
+
+  hosted-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build hosted image
+        run: docker build --pull -t flex-alchemy:ci .
+      - name: Verify packaged runtime
+        run: |
+          docker run --rm flex-alchemy:ci node --input-type=module -e "if (process.getuid() === 0) process.exit(1); const { catalogSnapshot } = await import('./apps/hosted/catalog-check.mjs'); await import('./apps/hosted/api.mjs'); await catalogSnapshot();"
+          status=0
+          output=$(docker run --rm flex-alchemy:ci 2>&1) || status=$?
+          if [ "$status" -ne 1 ] || ! grep -Fxq 'Hosted startup failed during configuration.' <<< "$output"; then
+            printf '%s\n' "$output"
+            exit 1
+          fi

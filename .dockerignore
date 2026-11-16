@@ -1,0 +1,16 @@
+**
+!package.json
+!package-lock.json
+!apps/
+!apps/hosted/
+!apps/hosted/**
+!apps/local/
+!apps/local/style.css
+!db/
+!db/**
+!docs/
+!docs/flex-alchemy/
+!docs/flex-alchemy/**
+**/*.test.mjs
+**/*.test.sql
+**/.env*

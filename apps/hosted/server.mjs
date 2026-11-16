@@ -7,6 +7,7 @@ import { checkDatabase } from '../../db/check-database.mjs';
 
 const { DATABASE_URL, ALCHEMY_PUBLIC_ORIGIN, OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET } = process.env;
 const port = Number(process.env.PORT ?? 4174);
+const listenHost = process.env.ALCHEMY_LISTEN_HOST ?? '127.0.0.1';
 let pool;
 let startupStage = 'configuration';
 try {
@@ -16,6 +17,7 @@ try {
     throw new Error('Use a PostgreSQL URL without SSL options');
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid port');
+  if (!['127.0.0.1', '0.0.0.0'].includes(listenHost)) throw new Error('Invalid listen host');
   const publicOrigin = ALCHEMY_PUBLIC_ORIGIN;
   const origin = new URL(publicOrigin);
   const issuer = new URL(OIDC_ISSUER);
@@ -71,8 +73,8 @@ try {
     catch { console.error('Expired identity record cleanup failed'); }
     finally { cleaning = false; }
   }
-  server.listen(port, '127.0.0.1', () => {
-    console.log('Hosted workspace listening on loopback port ' + port);
+  server.listen(port, listenHost, () => {
+    console.log('Hosted workspace listening on ' + listenHost + ':' + port);
     void cleanup();
     const timer = setInterval(cleanup, 3_600_000);
     timer.unref();

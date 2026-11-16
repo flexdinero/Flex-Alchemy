@@ -31,8 +31,20 @@ Run `npm ci --ignore-scripts` and `npm run start:hosted` after configuring these
 | `OIDC_ISSUER` | Configured HTTPS issuer |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Confidential client registration values |
 | `PORT` | Loopback listener port, default 4174 |
+| `ALCHEMY_LISTEN_HOST` | Defaults to `127.0.0.1`. The container uses `0.0.0.0` within its network namespace |
 
 Run the TLS reverse proxy on the same host. Preserve the public Host header and proxy to the loopback listener. The application ignores forwarded host values. Have the founder sign in once, then provision their workspace using the procedure below.
+
+### Deploy from a container
+
+Build from the repository root with `docker build --pull -t flex-alchemy:staging .`. Run migrations separately with an operator-only environment file, then launch the app with a runtime-only environment file. The following commands assume `PORT` is left at its default.
+
+```text
+docker run --rm --env-file /secure/alchemy-migration.env flex-alchemy:staging node db/migrate.mjs
+docker run -d --restart unless-stopped --name flex-alchemy --env-file /secure/alchemy-runtime.env -p 127.0.0.1:4174:4174 flex-alchemy:staging
+```
+
+Point the host's HTTPS proxy at `127.0.0.1:4174` and preserve the canonical public Host header. Verify `/health/ready` through that HTTPS origin, then complete a real sign-in, provision the founder workspace, and exercise project creation, refresh, an unrelated account's access denial, and sign-out. Record the deployed image digest and keep the previous deployable image for recovery.
 
 Set `ALCHEMY_MIGRATION_DATABASE_URL` to the TLS-configured PostgreSQL URL of a migration account authorized to create roles and schemas, then run `npm run migrate:hosted`. The command applies pending migrations in one transaction, records each checksum, and stops if the recorded history differs from the checked-out files. For a database previously migrated manually, reconcile its migration history before using this command. Provision a separate application login with permission to assume `alchemy_app` and `alchemy_identity`, without granting it schema ownership or direct administrative privileges. Configure a trusted certificate chain for PostgreSQL before starting the application.
 
