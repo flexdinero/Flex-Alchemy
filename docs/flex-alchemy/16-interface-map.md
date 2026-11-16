@@ -42,6 +42,7 @@ Routes below use W for the workspace path and P for the project path. Existing r
 | Workspace setup /workspaces/new | Chooser; open new W | Workspace name, initial owner, policy summary, create | Idempotent submission; on conflict show existing workspace when authorized |
 | Project setup W/projects/new and W/projects/import | Workspace or project switcher; open P | Name, purpose, repository picker, scope, import preview and confirmation | Report permission loss, cancelled or partial import; preserve previous project |
 | Repository P/repository | Project navigation | Owners and Editors record a public GitHub commit, save selected verified UTF-8 files, and import the compressed GitHub source archive. Members browse the tree, reopen saved files, and download the imported archive with its digest | Reject invalid or unavailable revisions, deduplicate saves, enforce workspace access, and reopen saved artifacts without provider access |
+| Archive Node tests P/repository?archive=runs | Imported archive detail | Owners and Editors queue the pinned archive when the worker is configured. Members inspect run state and captured output | Bind the lease to one run, reject stale completions, and keep source execution outside the web process |
 
 ## Work and delivery
 

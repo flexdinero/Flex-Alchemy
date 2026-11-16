@@ -54,7 +54,7 @@ test('hosted intake derives identity from a real expiring database session', asy
   assert.deepEqual(await inventoryArchive(archiveFor(githubCommit, '../outside'), githubCommit), { status: 'invalid-archive' });
   let archiveResponse = githubArchive;
   const archiveLocation = 'https://codeload.github.com/octocat/Hello-World/legacy.tar.gz/' + githubCommit;
-  const handle = hostedApi({ pool, publicOrigin, async githubRequest(url, options) {
+  const handle = hostedApi({ pool, publicOrigin, nodeRunsEnabled: true, async githubRequest(url, options) {
     githubCalls++;
     if (url === 'https://api.github.com/repos/octocat/hello-world/tarball/' + githubCommit) {
       assert.equal(options.redirect, 'manual');
@@ -198,6 +198,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/033_project_source_revisions.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/034_project_source_files.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/035_project_source_archives.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/036_archive_test_runs.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -367,6 +368,32 @@ test('hosted intake derives identity from a real expiring database session', asy
       const mismatch = JSON.parse((await visit(comparePath, viewerHeaders)).body);
       assert.equal(mismatch.result, 'differences');
       assert.deepEqual(mismatch.mismatched, [{ path: 'README', expectedGitBlobSha: 'f'.repeat(40), archiveGitBlobSha: archivedBlob }]);
+      const runsPath = previewPath + '&archive=runs';
+      const runs = await visit(runsPath, reviewerForm);
+      assert.match(runs.body, /No Node test runs/);
+      const runId = runs.body.match(/name="submission" value="([^"]+)"/)[1];
+      const runBody = 'submission=' + runId;
+      assert.equal((await visit(runsPath, viewerHeaders, runBody)).status, 403);
+      assert.equal((await visit(runsPath, reviewerForm, runBody)).status, 303);
+      assert.equal((await visit(runsPath, reviewerForm, runBody)).status, 303);
+      assert.match((await visit(runsPath, viewerHeaders)).body, /<strong>queued<\/strong>/);
+      await db.exec('SET ROLE alchemy_run_client');
+      try {
+        const { rows: [claimed] } = await db.query('SELECT * FROM alchemy.claim_archive_test_run()');
+        assert.equal(claimed.id, runId);
+        assert.deepEqual(Buffer.from(claimed.content), githubArchive);
+        assert.equal((await db.query('SELECT * FROM alchemy.claim_archive_test_run()')).rows.length, 0);
+        const finish = (token, result) => db.query('SELECT alchemy.finish_archive_test_run($1,$2,$3) AS recorded',
+          [runId, token, JSON.stringify(result)]);
+        assert.equal((await finish('00000000-0000-4000-8000-000000ffffff', { status: 'finished' })).rows[0].recorded, false);
+        assert.equal((await finish(claimed.lease_token, { status: 'finished', exitCode: 1 })).rows[0].recorded, true);
+        assert.equal((await finish(claimed.lease_token, { status: 'finished', exitCode: 0 })).rows[0].recorded, false);
+      } finally {
+        await db.exec('RESET ROLE');
+      }
+      const runPath = runsPath + '&run=' + runId;
+      assert.match((await visit(runPath, viewerHeaders)).body, /&quot;exitCode&quot;: 1/);
+      assert.equal((await visit(runPath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);

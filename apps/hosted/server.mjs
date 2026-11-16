@@ -39,7 +39,7 @@ try {
     sessions, publicOrigin,
   });
   startupStage = 'HTTP setup';
-  const api = hostedApi({ pool, publicOrigin, browserFlow });
+  const api = hostedApi({ pool, publicOrigin, browserFlow, nodeRunsEnabled: process.env.ALCHEMY_NODE_RUNS_ENABLED === '1' });
   const server = hostedHttpServer({ handle: api, publicOrigin, async checkReady() {
     if (stopping) return false;
     await pool.query('SELECT 1');

@@ -64,6 +64,21 @@ export function workspaceStore(pool) {
   }
 
   return {
+    archiveTestRuns(actorId, workspaceId, projectId, source, runId = null) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT id, state, requested_by, requested_at, finished_at${runId ? ', result' : ''}
+          FROM alchemy.archive_test_runs WHERE workspace_id = $1 AND project_id = $2 AND
+          owner_name = $3 AND repository_name = $4 AND commit_sha = $5 AND ($6::uuid IS NULL OR id = $6)
+          ORDER BY requested_at DESC, id LIMIT 20`,
+        [workspaceId, projectId, source.owner, source.repository, source.commit, runId])
+      ).rows);
+    },
+    queueArchiveTestRun(actorId, workspaceId, projectId, source, runId) {
+      return asActor(actorId, client => client.query(`INSERT INTO alchemy.archive_test_runs
+        (id, workspace_id, project_id, owner_name, repository_name, commit_sha, requested_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING`,
+      [runId, workspaceId, projectId, source.owner, source.repository, source.commit, actorId]));
+    },
     projectSourceArchive(actorId, workspaceId, projectId, source, download = false) {
       return asActor(actorId, async client => (
         await client.query(`SELECT archive_sha256, octet_length(content) AS size, recorded_by, recorded_at${download ? ', content' : ''}

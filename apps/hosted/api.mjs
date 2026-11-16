@@ -150,7 +150,7 @@ async function missionInput(request) {
   return value;
 }
 
-export function hostedApi({ pool, publicOrigin, browserFlow, githubRequest = fetch }) {
+export function hostedApi({ pool, publicOrigin, browserFlow, githubRequest = fetch, nodeRunsEnabled = false }) {
   const origin = new URL(publicOrigin);
   if (origin.protocol !== 'https:' || origin.origin !== publicOrigin) {
     throw new TypeError('The public origin must be an HTTPS origin without a path');
@@ -926,7 +926,8 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
             const canonicalName = source.owner + '/' + source.repository;
             if (url.searchParams.has('archive')) {
               const action = url.searchParams.get('archive');
-              if (!['view', 'download', 'inventory', 'compare'].includes(action) || file !== null || directory || (action !== 'view' && request.method !== 'GET')) {
+              if (!['view', 'download', 'inventory', 'compare', 'runs'].includes(action) || file !== null || directory ||
+                (!['view', 'runs'].includes(action) && request.method !== 'GET')) {
                 return page(back + '<h2>Invalid repository archive address</h2>', 400);
               }
               if (request.method === 'POST' && !writable) {
@@ -936,7 +937,45 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
               if (!revision) return page(back + '<h2>Repository revision unavailable</h2>', 404);
               const archiveUrl = repositoryPreview(url.pathname, canonicalName, source.commit);
               const returnUrl = archiveUrl + '&archive=view';
-              const saved = await workspaces.projectSourceArchive(actor, workspaceId, projectId, source, action !== 'view');
+              const saved = await workspaces.projectSourceArchive(actor, workspaceId, projectId, source,
+                ['download', 'inventory', 'compare'].includes(action));
+              if (action === 'runs') {
+                const runsUrl = archiveUrl + '&archive=runs';
+                const backToArchive = `<a href="${escapeHtml(returnUrl)}">Back to archive</a>`;
+                if (!saved) return page(backToArchive + '<h2>Repository archive unavailable</h2>', 404);
+                if (request.method === 'POST') {
+                  if (!nodeRunsEnabled) return page(backToArchive + '<h2>Node test dispatch is unavailable</h2>', 503);
+                  if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+                    return page(backToArchive + '<h2>Submit the Node test form</h2>', 415);
+                  }
+                  const form = new URLSearchParams(await request.text());
+                  const submission = form.get('submission');
+                  if (form.size !== 1 || !accountIdPattern.test(submission ?? '')) {
+                    return page(backToArchive + '<h2>Invalid run request</h2>', 400);
+                  }
+                  await workspaces.queueArchiveTestRun(actor, workspaceId, projectId, source, submission);
+                  return new Response(null, { status: 303, headers: { Location: runsUrl, 'Cache-Control': 'no-store' } });
+                }
+                const runId = url.searchParams.get('run');
+                if (runId !== null && !accountIdPattern.test(runId)) return page(backToArchive + '<h2>Invalid run address</h2>', 400);
+                const runs = await workspaces.archiveTestRuns(actor, workspaceId, projectId, source, runId);
+                if (runId !== null && !runs.length) return page(backToArchive + '<h2>Test run unavailable</h2>', 404);
+                const headline = run => `<strong>${escapeHtml(run.state)}</strong> · ${new Date(run.requested_at).toISOString()}`;
+                if (runId !== null) {
+                  const [run] = runs;
+                  return page(`<a href="${escapeHtml(runsUrl)}">Back to Node test runs</a><h2>Node test run</h2>
+<p>${headline(run)}</p><p>Requested by <code>${escapeHtml(run.requested_by)}</code></p>
+${run.result ? `<p>Runner result</p><pre>${escapeHtml(JSON.stringify(run.result, null, 2))}</pre>`
+  : '<p>Refresh for the latest state.</p>'}`);
+                }
+                const active = runs.some(run => ['queued', 'running'].includes(run.state));
+                const items = runs.map(run => `<li><a href="${escapeHtml(runsUrl + '&run=' + run.id)}">${headline(run)}</a></li>`);
+                return page(backToArchive + `<h2>Node test runs</h2><p>Commit <code>${source.commit}</code> · Archive SHA-256 <code>${saved.archive_sha256}</code></p>
+${items.length ? '<ol>' + items.join('') + '</ol>' : '<p>No Node test runs for this archive.</p>'}
+${writable && !nodeRunsEnabled ? '<p>Node test dispatch is unavailable on this deployment.</p>' : ''}
+${writable && nodeRunsEnabled && !active ? `<form method="post" action="${escapeHtml(runsUrl)}">
+<input type="hidden" name="submission" value="${randomUUID()}"><button>Queue Node tests</button></form>` : ''}`);
+              }
               if (action === 'inventory' || action === 'compare') {
                 if (!saved) return page(back + '<h2>Repository archive unavailable</h2>', 404);
                 const inventory = await inventoryArchive(saved.content, source.commit);
@@ -1002,7 +1041,8 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
 ${saved ? `<p>Imported ${saved.size} bytes on ${new Date(saved.recorded_at).toISOString()} by <code>${saved.recorded_by}</code>.</p>
 <p>SHA-256 <code>${saved.archive_sha256}</code></p><p><a href="${escapeHtml(archiveUrl + '&archive=download')}">Download saved archive</a>
 · <a href="${escapeHtml(archiveUrl + '&archive=inventory')}">Download file inventory (JSON)</a>
-· <a href="${escapeHtml(archiveUrl + '&archive=compare')}">Compare with GitHub tree (JSON)</a></p>`
+· <a href="${escapeHtml(archiveUrl + '&archive=compare')}">Compare with GitHub tree (JSON)</a>
+· <a href="${escapeHtml(archiveUrl + '&archive=runs')}">Node test runs</a></p>`
   : `<p>No archive is saved for this revision.</p>${writable ? '<p>Import the GitHub source archive for this commit, up to 8 MiB compressed and 64 MiB expanded.</p><form method="post"><button name="confirm" value="import">Import repository archive</button></form>' : ''}`}`);
             }
             if (request.method === 'POST' && (!file || !writable)) {
