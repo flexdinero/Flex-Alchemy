@@ -13,6 +13,7 @@ const id = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}';
 const projects = new RegExp('^/api/workspaces/(' + id + ')/projects$');
 const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/team/grant|/knowledge|/settings/audit|/reviews|/projects/new)?$');
 const accountIdPattern = new RegExp('^' + id + '$');
+const releaseEnvironments = ['staging', 'production'];
 const browsableDirectory = path => path.length <= 700 && path.split('/').length <= 8
   && path.split('/').every(part => part && !['.', '..'].includes(part) && !/[\u0000-\u001f\u007f]/.test(part));
 const previewableName = name => name.length > 0 && name.length <= 255
@@ -900,8 +901,46 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
           const back = `<a href="${releasePath}">Back to release candidates</a>`;
           const sourceLink = release => repositoryPreview(navigationProject.path + '/repository',
             release.owner_name + '/' + release.repository_name, release.commit_sha);
+          if (url.searchParams.get('approvers') === '1') {
+            if (project.role !== 'owner') return page(back + '<h2>Only workspace owners can manage release approvers</h2>', 403);
+            const approversPath = releasePath + '?approvers=1';
+            const renderApprovers = async (status = 200, error = '') => {
+              const grants = await workspaces.releaseApproverGrants(actor, workspaceId, projectId);
+              const items = grants.map(grant => `<li><code>${grant.reviewer_id}</code> · ${escapeHtml(grant.environment)}
+· ${grant.revoked_at ? 'Revoked' : 'Active'}
+${grant.revoked_at ? '' : `<form method="post"><input type="hidden" name="grant" value="${grant.id}">
+<button name="action" value="revoke">Revoke ${escapeHtml(grant.environment)} approval access for ${grant.reviewer_id}</button></form>`}</li>`);
+              return page(back + `<h2>Release approvers</h2>${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
+${items.length ? '<ol>' + items.join('') + '</ol>' : '<p>No release approver grants recorded.</p>'}
+<section><h3>Grant release approval access</h3><form method="post">
+<label for="release-reviewer">Workspace member account ID</label>
+<input id="release-reviewer" name="reviewer" required maxlength="36">
+<label for="release-environment">Environment</label><select id="release-environment" name="environment" required>
+<option value="">Choose an environment</option><option value="staging">Staging</option><option value="production">Production</option></select>
+<p><button name="action" value="grant">Grant approval access</button></p></form></section>`, status);
+            };
+            if (request.method === 'GET') return renderApprovers();
+            if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+              return renderApprovers(415, 'Submit the release approver form.');
+            }
+            const form = new URLSearchParams(await request.text());
+            const environment = form.get('environment');
+            const reviewer = form.get('reviewer')?.trim();
+            const grant = form.get('grant');
+            let changed;
+            if (form.size === 3 && form.get('action') === 'grant' &&
+              releaseEnvironments.includes(environment) && accountIdPattern.test(reviewer ?? '')) {
+              changed = await workspaces.setReleaseApproverGrant(actor, workspaceId, projectId, reviewer, environment);
+            } else if (form.size === 2 && form.get('action') === 'revoke' && accountIdPattern.test(grant ?? '')) {
+              changed = await workspaces.revokeReleaseApproverGrant(actor, workspaceId, projectId, grant);
+            } else {
+              return renderApprovers(400, 'Enter a workspace member ID and choose an environment, or select an active grant to revoke.');
+            }
+            if (!changed) return renderApprovers(409, 'The grant could not be changed. Check the current grants and workspace membership.');
+            return new Response(null, { status: 303, headers: { Location: approversPath, 'Cache-Control': 'no-store' } });
+          }
           const runId = url.searchParams.get('from');
-          if (request.method === 'POST' || runId !== null) {
+          if (runId !== null) {
             if (project.role !== 'owner') return page(back + '<h2>Only workspace owners can prepare release candidates</h2>', 403);
             if (!accountIdPattern.test(runId ?? '')) return page(back + '<h2>Invalid release candidate source</h2>', 400);
             const run = await workspaces.eligibleArchiveReleaseRun(actor, workspaceId, projectId, runId);
@@ -930,15 +969,58 @@ ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
             const [candidate] = candidates;
             if (!candidate) return page(back + '<h2>Release candidate unavailable</h2>', 404);
             const repository = sourceLink(candidate);
-            return page(back + `<h2>Release candidate</h2><p>Proposed ${new Date(candidate.proposed_at).toISOString()} by <code>${candidate.proposed_by}</code></p>
+            const renderCandidate = async (status = 200, error = '') => {
+              const decisions = await workspaces.releaseEnvironmentDecisions(actor, workspaceId, projectId, selected);
+              const grants = await workspaces.releaseApproverGrants(actor, workspaceId, projectId, actor);
+              const records = decisions.map(decision => `<li><strong>${escapeHtml(decision.environment)} · ${escapeHtml(decision.decision)}</strong>
+· ${new Date(decision.decided_at).toISOString()} by <code>${decision.reviewer_id}</code>
+<p class="preserve">${escapeHtml(decision.reason)}</p>${decision.expires_at
+  ? `<p>${decision.expired ? 'Expired' : 'Approval expires'} ${new Date(decision.expires_at).toISOString()}</p>` : ''}</li>`);
+              const forms = grants.filter(grant => grant.reviewer_id === actor && !grant.revoked_at &&
+                !decisions.some(decision => decision.environment === grant.environment)).map(grant => `<section>
+<h3>Review for ${escapeHtml(grant.environment)}</h3>
+<form method="post"><input type="hidden" name="grant" value="${grant.id}">
+<input type="hidden" name="environment" value="${escapeHtml(grant.environment)}">
+<input type="hidden" name="digest" value="${candidate.archive_sha256}">
+<label for="decision-${grant.environment}">Reason for ${escapeHtml(grant.environment)} decision</label>
+<textarea id="decision-${grant.environment}" name="reason" required maxlength="1000"></textarea>
+<button name="decision" value="approved">Approve for ${escapeHtml(grant.environment)}</button>
+<button name="decision" value="denied">Deny for ${escapeHtml(grant.environment)}</button></form></section>`);
+              return page(back + `<h2>Release candidate</h2><p>Proposed ${new Date(candidate.proposed_at).toISOString()} by <code>${candidate.proposed_by}</code></p>
 <p>Commit <code>${candidate.commit_sha}</code> · Archive SHA-256 <code>${candidate.archive_sha256}</code></p>
 <p class="preserve">${escapeHtml(candidate.reason)}</p>
 <p><a href="${escapeHtml(repository + '&archive=runs&run=' + candidate.run_id)}">View Node test evidence</a> ·
-<a href="${escapeHtml(repository + '&archive=download')}">Download candidate archive</a></p>`);
+<a href="${escapeHtml(repository + '&archive=download')}">Download candidate archive</a></p>
+<h3>Environment decisions</h3>${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
+${records.length ? '<ol>' + records.join('') + '</ol>' : '<p>No environment decisions recorded.</p>'}${forms.join('')}`, status);
+            };
+            if (request.method === 'GET') return renderCandidate();
+            if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') return renderCandidate(415, 'Submit the release decision form.');
+            const form = new URLSearchParams(await request.text());
+            const environment = form.get('environment');
+            const grant = form.get('grant');
+            const decision = form.get('decision');
+            const reason = form.get('reason')?.trim() ?? '';
+            if (form.size !== 5 || !releaseEnvironments.includes(environment) ||
+              !accountIdPattern.test(grant ?? '') || !['approved', 'denied'].includes(decision) || !reason || reason.length > 1000) {
+              return renderCandidate(400, 'Choose a valid environment and decision, and enter a reason.');
+            }
+            const grants = await workspaces.releaseApproverGrants(actor, workspaceId, projectId, actor);
+            if (!grants.some(entry => entry.id === grant && entry.environment === environment && entry.reviewer_id === actor && !entry.revoked_at)) {
+              return renderCandidate(403, 'An active approval grant for this environment is required.');
+            }
+            if (!await workspaces.decideReleaseEnvironment(actor, workspaceId, projectId, selected, grant, environment, form.get('digest'), decision, reason)) {
+              return renderCandidate(409, 'The decision could not be saved. Check the candidate and current environment decision.');
+            }
+            return new Response(null, { status: 303, headers: {
+              Location: releasePath + '?candidate=' + selected, 'Cache-Control': 'no-store',
+            } });
           }
+          if (request.method === 'POST') return page(back + '<h2>Choose a release candidate</h2>', 400);
           const items = candidates.map(candidate => `<li><a href="${releasePath}?candidate=${candidate.id}">Candidate for <code>${candidate.commit_sha}</code></a>
 · ${new Date(candidate.proposed_at).toISOString()}</li>`);
-          return page(`<h2>Release candidates</h2>${items.length ? '<ol>' + items.join('') + '</ol>' :
+          return page(`<h2>Release candidates</h2>${project.role === 'owner' ? `<p><a href="${releasePath}?approvers=1">Manage release approvers</a></p>` : ''}
+${items.length ? '<ol>' + items.join('') + '</ol>' :
             `<p>No release candidates. Prepare one from a passing run in <a href="${navigationProject.path}/repository">Repository</a>.</p>`}`);
         }
         if (action === '/repository') {

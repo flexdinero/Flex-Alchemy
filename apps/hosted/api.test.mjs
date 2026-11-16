@@ -200,6 +200,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/035_project_source_archives.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/036_archive_test_runs.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/037_archive_release_candidates.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/038_release_environment_decisions.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -423,6 +424,26 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.match((await visit(savedCandidate.headers.location, viewerHeaders)).body, /Release &lt;first&gt; candidate/);
       assert.equal((await visit(savedCandidate.headers.location, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal((await visit(candidateForm, releaseOwner, rationale)).headers.location, releases);
+      const approvers = releases + '?approvers=1';
+      assert.equal((await visit(approvers, reviewerForm)).status, 403);
+      assert.match((await visit(approvers, releaseOwner)).body, /No release approver grants/);
+      const grantBody = environment => new URLSearchParams({ action: 'grant', reviewer: actor, environment }).toString();
+      assert.equal((await visit(approvers, releaseOwner, grantBody('staging'))).status, 303);
+      assert.equal((await visit(approvers, releaseOwner, grantBody('production'))).status, 303);
+      const candidatePath = savedCandidate.headers.location;
+      const reviewerPage = (await visit(candidatePath, reviewerForm)).body;
+      const grantIds = [...reviewerPage.matchAll(/name="grant" value="([^"]+)">\s*<input type="hidden" name="environment" value="([^"]+)"/g)];
+      const scoped = Object.fromEntries(grantIds.map(([, grant, environment]) => [environment, grant]));
+      const decide = (grant, environment, digest = archiveDigest) =>
+        new URLSearchParams({ grant, environment, digest, decision: 'approved', reason: 'Release review evidence' }).toString();
+      assert.equal((await visit(candidatePath, releaseOwner, decide(scoped.staging, 'staging'))).status, 403);
+      assert.equal((await visit(candidatePath, reviewerForm, decide(scoped.staging, 'production'))).status, 403);
+      assert.equal((await visit(candidatePath, reviewerForm, decide(scoped.staging, 'staging', 'f'.repeat(64)))).status, 409);
+      assert.equal((await visit(candidatePath, reviewerForm, decide(scoped.staging, 'staging'))).status, 303);
+      assert.equal((await visit(candidatePath, reviewerForm, decide(scoped.staging, 'staging'))).status, 409);
+      assert.match((await visit(candidatePath, viewerHeaders)).body, /staging · approved/);
+      assert.equal((await visit(approvers, releaseOwner, 'action=revoke&grant=' + scoped.production)).status, 303);
+      assert.equal((await visit(candidatePath, reviewerForm, decide(scoped.production, 'production'))).status, 403);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);

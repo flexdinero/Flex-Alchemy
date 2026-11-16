@@ -64,6 +64,48 @@ export function workspaceStore(pool) {
   }
 
   return {
+    releaseApproverGrants(actorId, workspaceId, projectId, reviewerId = null) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT id, environment, reviewer_id, granted_by, granted_at, revoked_by, revoked_at
+          FROM alchemy.release_approver_grants WHERE workspace_id = $1 AND project_id = $2 AND ($3::uuid IS NULL OR reviewer_id = $3)
+          ORDER BY (revoked_at IS NOT NULL), granted_at DESC, id LIMIT 100`, [workspaceId, projectId, reviewerId])
+      ).rows);
+    },
+    setReleaseApproverGrant(actorId, workspaceId, projectId, target, environment) {
+      return asActor(actorId, async client => (
+        await client.query(`INSERT INTO alchemy.release_approver_grants (workspace_id, project_id, environment, reviewer_id, granted_by)
+          SELECT $1, $2, $3, team.actor_id, $5 FROM alchemy.workspace_team($1) team
+          WHERE team.actor_id = $4 AND team.revoked_at IS NULL ON CONFLICT DO NOTHING RETURNING id`,
+        [workspaceId, projectId, environment, target, actorId])
+      ).rows.length > 0);
+    },
+    revokeReleaseApproverGrant(actorId, workspaceId, projectId, grantId) {
+      return asActor(actorId, async client => (
+        await client.query(`UPDATE alchemy.release_approver_grants SET revoked_at = statement_timestamp(), revoked_by = $4
+          WHERE workspace_id = $1 AND project_id = $2 AND id = $3 AND revoked_at IS NULL RETURNING id`,
+        [workspaceId, projectId, grantId, actorId])
+      ).rows.length > 0);
+    },
+    releaseEnvironmentDecisions(actorId, workspaceId, projectId, candidateId) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT environment, reviewer_id, decision, reason, decided_at, expires_at, expires_at <= statement_timestamp() AS expired
+          FROM alchemy.release_environment_decisions WHERE workspace_id = $1 AND project_id = $2 AND candidate_id = $3
+          ORDER BY environment`, [workspaceId, projectId, candidateId])
+      ).rows);
+    },
+    decideReleaseEnvironment(actorId, workspaceId, projectId, candidateId, grantId, environment, digest, decision, reason) {
+      return asActor(actorId, async client => (
+        await client.query(`INSERT INTO alchemy.release_environment_decisions
+          (candidate_id,workspace_id,project_id,environment,archive_sha256,grant_id,reviewer_id,decision,reason,expires_at)
+          SELECT c.id,c.workspace_id,c.project_id,g.environment,c.archive_sha256,g.id,$8,$6,$7,
+            CASE WHEN $6 = 'approved' THEN statement_timestamp() + interval '24 hours' END
+          FROM alchemy.archive_release_candidates c JOIN alchemy.release_approver_grants g USING (workspace_id,project_id)
+          WHERE c.workspace_id = $1 AND c.project_id = $2 AND c.id = $3 AND g.id = $4
+            AND g.environment = $5 AND g.reviewer_id = $8 AND g.revoked_at IS NULL AND c.archive_sha256 = $9
+          ON CONFLICT DO NOTHING RETURNING candidate_id`,
+        [workspaceId, projectId, candidateId, grantId, environment, decision, reason, actorId, digest])
+      ).rows.length > 0);
+    },
     archiveReleaseCandidates(actorId, workspaceId, projectId, candidateId = null) {
       return asActor(actorId, async client => (
         await client.query(`SELECT c.id, c.run_id, c.archive_sha256, c.proposed_by, c.proposed_at, c.reason,
