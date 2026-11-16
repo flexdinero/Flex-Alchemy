@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, X509Certificate } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import tls from 'node:tls';
 import AxeBuilder from '@axe-core/playwright';
 import { chromium } from 'playwright';
@@ -79,6 +80,35 @@ export async function checkIdentityBrowser({ origin, identityOrigin, ca, passwor
     await page.reload();
     await page.getByRole('heading', { name: 'Browser verification project' }).waitFor();
     await audit('Project at 320 px');
+    await page.getByRole('link', { name: 'New mission', exact: true }).click();
+    await page.getByLabel('Title', { exact: true }).fill('Review source catalog');
+    await page.getByLabel('Goal', { exact: true }).fill('Verify the structure of the deployed source catalog.');
+    await page.getByLabel('Acceptance criteria').fill('Save a passing receipt with both input digests.');
+    await audit('Mission intake at 320 px');
+    await page.getByRole('button', { name: 'Save mission', exact: true }).click();
+    await page.getByRole('heading', { name: 'Review source catalog', exact: true }).waitFor();
+    const mission = page.url();
+    await page.getByText('Awaiting review', { exact: true }).waitFor();
+    await page.getByLabel('Evidence and reasoning').fill('The criteria specify a bounded catalog check.');
+    await page.getByRole('button', { name: 'Accept mission' }).click();
+    await page.getByText('Accepted by reviewer', { exact: true }).first().waitFor();
+    await page.getByRole('link', { name: 'Source catalog verification', exact: true }).click();
+    await page.getByRole('link', { name: 'Inspect verification plan' }).click();
+    await page.getByRole('button', { name: 'Check source catalog' }).click();
+    await page.getByRole('heading', { name: 'Passed', exact: true }).waitFor();
+    await audit('Catalog receipt at 320 px');
+    const pendingDownload = page.waitForEvent('download', { timeout: 15_000 });
+    await page.getByRole('link', { name: 'Download receipt (JSON)' }).click();
+    const download = await pendingDownload;
+    assert.match(download.suggestedFilename(), /^alchemy-catalog-receipt-.*\.json$/);
+    const evidence = JSON.parse(await readFile(await download.path(), 'utf8'));
+    assert.equal(evidence.missionId, new URL(mission).pathname.split('/').at(-1));
+    assert.equal(evidence.comparison.currentReview, true);
+    assert.deepEqual(evidence.receipt.failures, []);
+    assert.match(evidence.receipt.catalog_sha256, /^[a-f0-9]{64}$/);
+    assert.match(evidence.receipt.checker_sha256, /^[a-f0-9]{64}$/);
+    await page.reload();
+    await page.getByRole('heading', { name: 'Passed', exact: true }).waitFor();
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(workspace, { waitUntil: 'domcontentloaded' });
     await audit('Workspace at 1440 px');
@@ -119,7 +149,7 @@ export async function checkIdentityBrowser({ origin, identityOrigin, ca, passwor
     await page.getByRole('button', { name: 'Use default appearance' }).click();
     await page.getByRole('status').filter({ hasText: 'Default appearance restored.' }).waitFor();
     assert.equal(await page.locator('body').getAttribute('data-theme'), 'dark');
-    console.log('Browser sign-in, keyboard skip link, workspace and project creation, reload, appearance, and responsive axe checks passed.');
+    console.log('Browser sign-in, workspace and project creation, mission review, catalog receipt, appearance, and responsive axe checks passed.');
   } finally {
     await browser.close();
   }

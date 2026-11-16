@@ -59,6 +59,8 @@ Account appearance supports Dark, Light, Match system, and a reset to Dark. The 
 
 From a hosted mission, open **Source catalog verification**. An owner or editor can run the structural check after accepting the mission. Workspace members can inspect the saved result, the review version, the actor and timestamp, and the SHA-256 digests of the catalog and checker. If the review changes before the result is saved, reopen the mission and read the new decision. Repeated submissions for the same review and inputs reuse the existing receipt. Recent workspace activity links to the evidence page. Mission, project, and workspace JSON handoffs carry the saved receipts. The check covers the deployed Alchemy catalog. General work plans, project artifact execution, releases, and rollback still require implementation.
 
+The packaged HTTPS browser smoke test creates and accepts a mission, inspects the catalog check plan, runs the check, reloads the saved result, and downloads the receipt through the visible link. It verifies the receipt's mission ID, current review, passing result, and input digests. Automated accessibility checks cover mission intake and the saved receipt at 320 px.
+
 
 ## Delivery sequence
 
