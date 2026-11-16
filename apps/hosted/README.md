@@ -79,6 +79,8 @@ Workspace owners can open **Team access** to see account IDs, roles, and active 
 
 After migration 012, workspace owners can revoke editor and viewer access from Team access. Revocation preserves earlier records, retains the revoked membership, and records the acting owner in PostgreSQL.
 
+After migration 030, a workspace owner can open **Team access → Grant access** and add a person who has signed in and shared their Flex Alchemy account ID. The grant records the owner, role, and time. Use this workflow for new memberships. Active and revoked membership records retain their existing history.
+
 Migration 013 adds hosted mission revisions. Owners and editors can revise the goal and acceptance criteria. Each new revision awaits its own review, and previous decisions and receipts remain available in history and JSON exports.
 
 Mission revisions appear in workspace activity and on the signed-in home feed with a link to the exact revision. Verification history labels receipts from earlier reviews as historical.

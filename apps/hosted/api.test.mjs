@@ -123,6 +123,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/026_project_purpose_edit.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/027_project_submission.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/028_project_submission_history.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/030_workspace_member_grants.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -699,6 +700,23 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal((await request(createdProject.headers.location, owner)).status, 404);
       assert.equal((await visit(projectIntake, projectForm, submission)).status, 409);
       assert.equal((await request(createdProject.headers.location, owner)).status, 404);
+      const teammate = await sessions.issue(identity('new-teammate'));
+      const teammateId = await sessions.actor(teammate);
+      const grantPath = teamPath + '/grant';
+      const grant = (token, member, role) => visit(grantPath, {
+        ...reviewerForm, Cookie: '__Host-alchemy_session=' + token,
+      }, new URLSearchParams({ member, role }).toString());
+      assert.match((await visit(grantPath, ownerHeaders)).body, /Flex Alchemy account ID/);
+      assert.equal((await request(workspacePath, teammate)).status, 404);
+      assert.equal((await grant(editor, teammateId, 'editor')).status, 403);
+      assert.equal((await grant(owner, teammateId, 'owner')).status, 400);
+      assert.equal((await grant(owner, '00000000-0000-4000-8000-000000ffffff', 'viewer')).status, 409);
+      assert.equal((await grant(owner, teammateId, 'viewer')).status, 303);
+      assert.equal((await grant(owner, teammateId, 'editor')).status, 409);
+      assert.equal((await request(workspacePath, teammate)).status, 200);
+      assert.equal((await request(path, teammate, input)).status, 403);
+      assert.deepEqual((await db.query('SELECT role, granted_by FROM alchemy.memberships WHERE workspace_id = $1 AND actor_id = $2',
+        [workspace, teammateId])).rows, [{ role: 'viewer', granted_by: ownerActor }]);
       const revoke = (token, member) => visit(teamPath, {
         ...reviewerForm, Cookie: '__Host-alchemy_session=' + token,
       }, new URLSearchParams({ member, confirm: 'yes' }).toString());
@@ -721,6 +739,7 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal((await revoke(owner, viewerActor)).status, 303);
       assert.equal((await request(confirmationPath, owner)).status, 409);
       assert.equal((await revoke(owner, viewerActor)).status, 409);
+      assert.equal((await grant(owner, viewerActor, 'viewer')).status, 409);
       assert.equal((await request(workspacePath, viewer)).status, 404);
       assert.match(await (await request(teamPath, owner)).text(), /Revoked /);
       assert.deepEqual((await db.query('SELECT revoked_by FROM alchemy.memberships WHERE workspace_id = $1 AND actor_id = $2',

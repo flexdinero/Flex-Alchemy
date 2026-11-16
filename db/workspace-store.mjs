@@ -127,6 +127,13 @@ export function workspaceStore(pool) {
         await client.query('SELECT * FROM alchemy.workspace_team($1)', [workspaceId])
       ).rows);
     },
+    grantWorkspaceMember(actorId, workspaceId, memberId, role) {
+      requireId(workspaceId, 'Workspace');
+      requireId(memberId, 'Member');
+      return asActor(actorId, async client => (
+        await client.query('SELECT alchemy.grant_workspace_member($1, $2, $3) AS granted', [workspaceId, memberId, role])
+      ).rows[0].granted);
+    },
     revokeWorkspaceMember(actorId, workspaceId, memberId) {
       requireId(workspaceId, 'Workspace');
       requireId(memberId, 'Member');

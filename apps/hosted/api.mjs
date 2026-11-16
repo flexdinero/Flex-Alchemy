@@ -9,7 +9,8 @@ const style = await readFile(new URL('../local/style.css', import.meta.url), 'ut
 
 const id = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}';
 const projects = new RegExp('^/api/workspaces/(' + id + ')/projects$');
-const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/knowledge|/settings/audit|/reviews|/projects/new)?$');
+const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/team/grant|/knowledge|/settings/audit|/reviews|/projects/new)?$');
+const accountIdPattern = new RegExp('^' + id + '$');
 const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions)?$');
 const missions = new RegExp('^/api/workspaces/(' + id + ')/projects/(' + id + ')/missions$');
 const reviewRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')/missions/(' + id + ')(/export|/sources|/verification|/revise|/plan)?$');
@@ -347,6 +348,34 @@ ${latest ? `<input type="hidden" name="event" value="${escapeHtml(latest.event_i
 <p>Catalog SHA-256 <code>${catalog.catalogSha256}</code></p>
 ${rows ? '<ul>' + rows + '</ul>' : '<p>No references match your search.</p>'}`);
         }
+        if (workspaceMatch[2] === '/team/grant') {
+          const teamPath = '/workspaces/' + workspace.id + '/team';
+          const backToTeam = `<a href="${teamPath}">Back to team access</a>`;
+          if (workspace.role !== 'owner') return page('<h2>Only workspace owners can grant access</h2>', 403);
+          const grantForm = (message = '', member = '', role = '') => backToTeam + `<section><h2>Grant workspace access</h2>
+<p>Ask the person to sign in and copy their account ID from Account.</p>
+${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
+<form method="post"><label for="member">Flex Alchemy account ID</label>
+<input id="member" name="member" value="${escapeHtml(member)}" required maxlength="36" spellcheck="false">
+<label for="role">Workspace role</label><select id="role" name="role" required>
+<option value="">Choose a role</option><option value="viewer"${role === 'viewer' ? ' selected' : ''}>Viewer</option>
+<option value="editor"${role === 'editor' ? ' selected' : ''}>Editor</option></select>
+<p><button>Grant access</button></p></form></section>`;
+          if (request.method === 'GET') return page(grantForm());
+          if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+            return page(grantForm('Submit the grant access form.'), 415);
+          }
+          const form = new URLSearchParams(await request.text());
+          const member = form.get('member')?.trim().slice(0, 37) ?? '';
+          const role = form.get('role');
+          if (form.size !== 2 || !accountIdPattern.test(member) || !['viewer', 'editor'].includes(role)) {
+            return page(grantForm('Enter a valid account ID and choose Viewer or Editor.', member, role), 400);
+          }
+          if (!await workspaces.grantWorkspaceMember(actor, workspace.id, member, role)) {
+            return page(grantForm('Access could not be granted. Check the account ID and whether the account already has a membership record.', member, role), 409);
+          }
+          return new Response(null, { status: 303, headers: { Location: teamPath, 'Cache-Control': 'no-store' } });
+        }
         if (workspaceMatch[2] === '/team') {
           const backToWorkspace = `<a href="/workspaces/${workspace.id}">Back to workspace</a>`;
           if (request.method === 'POST') {
@@ -382,7 +411,7 @@ ${escapeHtml(workspace.name)}. Earlier work will retain its attribution.</p>
           const rows = team.map(member => `<tr><td><code>${escapeHtml(member.actor_id)}</code></td>
 <td>${escapeHtml(member.role)}</td><td>${member.revoked_at
   ? 'Revoked ' + escapeHtml(new Date(member.revoked_at).toISOString()) : 'Active'}${!member.revoked_at && member.role !== 'owner' ? `<a href="${url.pathname}?revoke=${encodeURIComponent(member.actor_id)}" aria-label="Revoke access for ${escapeHtml(member.actor_id)}">Revoke access</a>` : ''}</td></tr>`).join('');
-          return page(backToWorkspace + `<h2>Team access for ${escapeHtml(workspace.name)}</h2><p><a href="/workspaces/${workspace.id}/settings/audit?view=access">Access revocation history</a></p>
+          return page(backToWorkspace + `<h2>Team access for ${escapeHtml(workspace.name)}</h2><p><a href="${url.pathname}/grant">Grant access</a></p><p><a href="/workspaces/${workspace.id}/settings/audit?view=access">Access revocation history</a></p>
 <table class="team-table"><caption>Workspace memberships</caption><thead><tr>
 <th scope="col">Account ID</th><th scope="col">Role</th><th scope="col">Access</th>
 </tr></thead><tbody>${rows}</tbody></table>`);

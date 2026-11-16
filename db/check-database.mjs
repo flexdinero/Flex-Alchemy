@@ -43,6 +43,8 @@ export async function checkDatabase(pool) {
         AND conname = 'mission_submission_once')
       AND has_function_privilege(current_user, 'alchemy.workspace_team(uuid)', 'EXECUTE')
       AND has_function_privilege(current_user, 'alchemy.revoke_workspace_member(uuid,uuid)', 'EXECUTE')
+      AND has_function_privilege(current_user, 'alchemy.grant_workspace_member(uuid,uuid,text)', 'EXECUTE')
+      AND NOT has_table_privilege(current_user, 'alchemy.memberships', 'INSERT')
       AND has_column_privilege(current_user, 'alchemy.mission_catalog_checks', 'catalog_bytes', 'INSERT')
       AND has_function_privilege(current_user, 'alchemy.workspace_revocation_audit(uuid)', 'EXECUTE')
       AND to_regclass('alchemy.source_decision_version') IS NOT NULL
