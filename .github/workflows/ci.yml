@@ -70,3 +70,7 @@ jobs:
             printf '%s\n' "$output"
             exit 1
           fi
+      - name: Build and verify isolated Node worker
+        run: |
+          docker build -f apps/worker/Dockerfile -t flex-alchemy-node-worker .
+          node apps/worker/smoke.mjs

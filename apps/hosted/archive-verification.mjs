@@ -2,6 +2,9 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import { createHash } from 'node:crypto';
+import { createWriteStream } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import tar from 'tar-stream';
 
 const expandedLimit = 64 * 1024 * 1024;
@@ -64,7 +67,7 @@ export async function verifyArchiveEnvelope(bytes, expectedCommit) {
   return pinnedCommit(prefix) === expectedCommit ? 'verified' : 'wrong-revision';
 }
 
-export async function inventoryArchive(bytes, expectedCommit) {
+export async function inventoryArchive(bytes, expectedCommit, destination) {
   const status = await verifyArchiveEnvelope(bytes, expectedCommit);
   if (status !== 'verified') return { status };
   const entries = [];
@@ -72,12 +75,19 @@ export async function inventoryArchive(bytes, expectedCommit) {
   const extractor = tar.extract();
   let failure = null;
   let size = 0;
+  let root;
   extractor.on('entry', (header, contents, next) => {
     const path = header.name.replace(/\/$/, '');
     if (!failure && (entries.length >= 10_000 || path.length > 2048)) failure = 'too-large';
     if (!failure && (!path || /[\\:\u0000-\u001f\u007f]/.test(path) ||
       path.split('/').some(part => !part || part === '.' || part === '..') || names.has(path))) {
       failure = 'invalid-archive';
+    }
+    if (!failure && destination) {
+      const parts = path.split('/');
+      root ??= parts[0];
+      if (root !== parts[0] || !['file', 'directory'].includes(header.type) ||
+        (parts.length === 1 && header.type !== 'directory')) failure = 'unsupported-archive';
     }
     if (failure) {
       contents.once('end', () => next());
@@ -87,16 +97,32 @@ export async function inventoryArchive(bytes, expectedCommit) {
     names.add(path);
     const hash = header.type === 'file' ? createHash('sha256') : null;
     const blob = hash ? createHash('sha1').update('blob ' + header.size + '\0') : null;
-    if (hash) contents.on('data', chunk => {
+    const updateHashes = chunk => {
       hash.update(chunk);
       blob.update(chunk);
-    });
-    contents.once('end', () => {
+    };
+    const done = () => {
       entries.push({ path, type: header.type, size: header.size,
         ...(hash ? { sha256: hash.digest('hex'), gitBlobSha: blob.digest('hex') } : {}) });
       next();
-    });
-    contents.resume();
+    };
+    if (destination && header.type === 'file') {
+      const file = join(destination, ...path.split('/'));
+      mkdir(dirname(file), { recursive: true }).then(() => pipeline(contents, async function* (chunks) {
+        for await (const chunk of chunks) {
+          updateHashes(chunk);
+          yield chunk;
+        }
+      }, createWriteStream(file, { flags: 'wx' })))
+        .then(done, () => {
+          failure = 'invalid-archive';
+          extractor.destroy();
+        });
+    } else {
+      if (hash) contents.on('data', updateHashes);
+      contents.once('end', done);
+      contents.resume();
+    }
   });
   try {
     await pipeline(Readable.from([bytes]), createGunzip(), async function* (chunks) {
@@ -109,7 +135,7 @@ export async function inventoryArchive(bytes, expectedCommit) {
         yield chunk;
       }
     }, extractor);
-    return failure ? { status: failure } : { status: 'verified', entries, expandedSize: size };
+    return failure ? { status: failure } : { status: 'verified', entries, expandedSize: size, ...(destination ? { root } : {}) };
   } catch {
     return { status: failure ?? 'invalid-archive' };
   }

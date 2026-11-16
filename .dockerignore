@@ -6,6 +6,8 @@
 !apps/hosted/**
 !apps/local/
 !apps/local/style.css
+!apps/worker/
+!apps/worker/run-node-tests.mjs
 !db/
 !db/**
 !docs/
