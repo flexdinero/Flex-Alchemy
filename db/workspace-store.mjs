@@ -64,6 +64,21 @@ export function workspaceStore(pool) {
   }
 
   return {
+    projectSourceArchive(actorId, workspaceId, projectId, source, download = false) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT archive_sha256, octet_length(content) AS size, recorded_by, recorded_at${download ? ', content' : ''}
+          FROM alchemy.project_source_archives
+          WHERE workspace_id = $1 AND project_id = $2 AND owner_name = $3 AND repository_name = $4 AND commit_sha = $5`,
+        [workspaceId, projectId, source.owner, source.repository, source.commit])
+      ).rows[0] ?? null);
+    },
+    recordProjectSourceArchive(actorId, workspaceId, projectId, source, content) {
+      return asActor(actorId, client => client.query(`INSERT INTO alchemy.project_source_archives
+        (workspace_id, project_id, owner_name, repository_name, commit_sha, content, recorded_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (workspace_id, project_id, owner_name, repository_name, commit_sha) DO NOTHING`,
+      [workspaceId, projectId, source.owner, source.repository, source.commit, content, actorId]));
+    },
     projectSourceFile(actorId, workspaceId, projectId, source, path) {
       return asActor(actorId, async client => (
         await client.query(`SELECT blob_sha, content, recorded_by, recorded_at FROM alchemy.project_source_files

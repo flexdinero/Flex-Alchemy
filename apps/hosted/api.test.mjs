@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -22,9 +23,17 @@ test('hosted intake derives identity from a real expiring database session', asy
   const githubFile = Buffer.from('<script>alert("source")</script>\n');
   const githubBlob = createHash('sha1').update('blob ' + githubFile.length + '\0').update(githubFile).digest('hex');
   let alterGitHubBlob = false;
+  let invalidArchiveRedirect = false;
+  const githubArchive = gzipSync(Buffer.alloc(1024));
+  const archiveLocation = 'https://codeload.github.com/octocat/Hello-World/legacy.tar.gz/' + githubCommit;
   const handle = hostedApi({ pool, publicOrigin, async githubRequest(url, options) {
     githubCalls++;
+    if (url === 'https://api.github.com/repos/octocat/hello-world/tarball/' + githubCommit) {
+      assert.equal(options.redirect, 'manual');
+      return new Response(null, { status: 302, headers: { Location: invalidArchiveRedirect ? 'https://example.org/archive' : archiveLocation } });
+    }
     assert.equal(options.redirect, 'error');
+    if (url === archiveLocation) return new Response(githubArchive);
     const base = 'https://api.github.com/repos/octocat/hello-world/git/';
     if (url === base + 'trees/' + githubTree) {
       return Response.json({ sha: githubTree, tree: [{ path: 'src', type: 'tree', sha: githubNestedTree }] });
@@ -155,6 +164,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/032_workspace_member_role_changes.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/033_project_source_revisions.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/034_project_source_files.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/035_project_source_archives.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -203,7 +213,10 @@ test('hosted intake derives identity from a real expiring database session', asy
         const request = httpRequest(local + path, { method: body ? 'POST' : 'GET', headers }, response => {
           const chunks = [];
           response.on('data', chunk => chunks.push(chunk));
-          response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks).toString() }));
+          response.on('end', () => {
+            const bytes = Buffer.concat(chunks);
+            resolve({ status: response.statusCode, headers: response.headers, body: bytes.toString(), bytes });
+          });
           response.on('error', reject);
         });
         request.on('error', reject);
@@ -277,6 +290,26 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal((await visit(savedFilesPath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal(githubCalls, callsAfterSave);
       alterGitHubBlob = false;
+      const archiveView = previewPath + '&archive=view';
+      const archiveDownload = previewPath + '&archive=download';
+      assert.match((await visit(archiveView, reviewerForm)).body, /Import repository archive/);
+      assert.equal((await visit(archiveDownload, viewerHeaders)).status, 404);
+      assert.equal((await visit(archiveView, viewerHeaders, 'confirm=import')).status, 403);
+      invalidArchiveRedirect = true;
+      const callsBeforeImport = githubCalls;
+      assert.equal((await visit(archiveView, reviewerForm, 'confirm=import')).status, 503);
+      assert.equal(githubCalls, callsBeforeImport + 1);
+      invalidArchiveRedirect = false;
+      assert.equal((await visit(archiveView, reviewerForm, 'confirm=import')).status, 303);
+      const callsAfterImport = githubCalls;
+      assert.equal((await visit(archiveView, reviewerForm, 'confirm=import')).status, 303);
+      assert.match((await visit(archiveView, viewerHeaders)).body, new RegExp(createHash('sha256').update(githubArchive).digest('hex')));
+      const downloadedArchive = await visit(archiveDownload, viewerHeaders);
+      assert.equal(downloadedArchive.status, 200);
+      assert.equal(downloadedArchive.headers['content-type'], 'application/gzip');
+      assert.deepEqual(downloadedArchive.bytes, githubArchive);
+      assert.equal((await visit(archiveDownload, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
+      assert.equal(githubCalls, callsAfterImport);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);

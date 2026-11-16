@@ -41,7 +41,7 @@ Routes below use W for the workspace path and P for the project path. Existing r
 | Workspace chooser / | Authenticated entry; open W | Available workspaces, create or join options, sign-out | Empty list gives an actionable entry path; revoked workspaces disappear |
 | Workspace setup /workspaces/new | Chooser; open new W | Workspace name, initial owner, policy summary, create | Idempotent submission; on conflict show existing workspace when authorized |
 | Project setup W/projects/new and W/projects/import | Workspace or project switcher; open P | Name, purpose, repository picker, scope, import preview and confirmation | Report permission loss, cancelled or partial import; preserve previous project |
-| Repository P/repository | Project navigation | Owners and Editors record a public GitHub commit and save selected verified UTF-8 files. Members browse its tree and reopen saved source files | Reject invalid or unavailable revisions, deduplicate saves, enforce workspace access, and reopen saved files without provider access |
+| Repository P/repository | Project navigation | Owners and Editors record a public GitHub commit, save selected verified UTF-8 files, and import the compressed GitHub source archive. Members browse the tree, reopen saved files, and download the imported archive with its digest | Reject invalid or unavailable revisions, deduplicate saves, enforce workspace access, and reopen saved artifacts without provider access |
 
 ## Work and delivery
 

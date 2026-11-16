@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 const fullSha = /^[a-f0-9]{40}$/;
 const filePreviewLimit = 65_536;
+const archiveLimit = 8 * 1024 * 1024;
 const repositoryUrl = /^https:\/\/github\.com\/([a-z0-9](?:[a-z0-9-]{0,38}))\/([a-z0-9_.-]{1,100})\/?$/i;
 
 export function parseGitHubSource(repository, revision) {
@@ -92,4 +93,44 @@ export async function readGitHubTextFile(source, entry, request = fetch) {
   }
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return { status: 'unsupported' };
   return { status: 'verified', size, text, bytes };
+}
+
+export async function readGitHubArchive({ owner, repository, commit }, request = fetch) {
+  const name = owner + '/' + repository;
+  const signal = AbortSignal.timeout(12_000);
+  const headers = { 'User-Agent': 'Flex-Alchemy', Accept: 'application/vnd.github+json' };
+  try {
+    const redirect = await request('https://api.github.com/repos/' + name + '/tarball/' + commit, {
+      redirect: 'manual', signal, headers,
+    });
+    await redirect.body?.cancel();
+    if (redirect.status !== 302) return { status: redirect.status === 404 ? 'missing' : 'unavailable' };
+    const target = new URL(redirect.headers.get('location'));
+    const path = target.pathname.toLowerCase();
+    if (target.origin !== 'https://codeload.github.com' || target.username || target.password || target.search ||
+      !['/' + name + '/legacy.tar.gz/' + commit, '/' + name + '/tar.gz/' + commit].includes(path)) {
+      return { status: 'unavailable' };
+    }
+    const response = await request(target.href, { redirect: 'error', signal, headers: { 'User-Agent': 'Flex-Alchemy' } });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      return { status: response.status === 404 ? 'missing' : 'unavailable' };
+    }
+    if (Number(response.headers.get('content-length')) > archiveLimit) {
+      await response.body.cancel();
+      return { status: 'too-large' };
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.byteLength;
+      if (size > archiveLimit) return { status: 'too-large' };
+      chunks.push(chunk);
+    }
+    const bytes = Buffer.concat(chunks, size);
+    if (size < 18 || bytes[0] !== 0x1f || bytes[1] !== 0x8b || bytes[2] !== 8) return { status: 'unavailable' };
+    return { status: 'verified', bytes };
+  } catch {
+    return { status: 'unavailable' };
+  }
 }

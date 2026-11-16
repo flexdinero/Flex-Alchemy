@@ -4,7 +4,7 @@ import { sessionStore } from '../../db/session-store.mjs';
 import { readFile } from 'node:fs/promises';
 import { retrieve } from '../../docs/flex-alchemy/knowledge/retrieve.mjs';
 import { randomUUID } from 'node:crypto';
-import { inspectGitHubDirectory, isRegularGitHubFile, parseGitHubSource, readGitHubTextFile, verifyGitHubSource } from './github-source.mjs';
+import { inspectGitHubDirectory, isRegularGitHubFile, parseGitHubSource, readGitHubArchive, readGitHubTextFile, verifyGitHubSource } from './github-source.mjs';
 
 const style = await readFile(new URL('../local/style.css', import.meta.url), 'utf8');
 
@@ -922,10 +922,57 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
               || (file !== null && (!previewableName(file) || Buffer.byteLength(filePath) > 2000))) {
               return page(back + '<h2>Invalid repository preview address</h2>', 400);
             }
+            const canonicalName = source.owner + '/' + source.repository;
+            if (url.searchParams.has('archive')) {
+              const action = url.searchParams.get('archive');
+              if (!['view', 'download'].includes(action) || file !== null || directory || (action === 'download' && request.method !== 'GET')) {
+                return page(back + '<h2>Invalid repository archive address</h2>', 400);
+              }
+              if (request.method === 'POST' && !writable) {
+                return page(back + '<h2>Only workspace Owners and Editors can import a repository archive</h2>', 403);
+              }
+              const revision = await workspaces.projectSource(actor, workspaceId, projectId, source);
+              if (!revision) return page(back + '<h2>Repository revision unavailable</h2>', 404);
+              const archiveUrl = repositoryPreview(url.pathname, canonicalName, source.commit);
+              const returnUrl = archiveUrl + '&archive=view';
+              const saved = await workspaces.projectSourceArchive(actor, workspaceId, projectId, source, action === 'download');
+              if (action === 'download') {
+                if (!saved) return page(back + '<h2>Repository archive unavailable</h2>', 404);
+                return new Response(saved.content, { headers: {
+                  'Content-Type': 'application/gzip', 'Cache-Control': 'no-store',
+                  'Content-Disposition': `attachment; filename="source-${source.commit}.tar.gz"`,
+                  'X-Content-Type-Options': 'nosniff',
+                } });
+              }
+              if (request.method === 'POST') {
+                const formType = request.headers.get('content-type')?.split(';')[0];
+                const form = formType === 'application/x-www-form-urlencoded' ? new URLSearchParams(await request.text()) : null;
+                if (form?.size !== 1 || form.get('confirm') !== 'import') {
+                  return page(back + '<h2>Submit the archive import form</h2>', 400);
+                }
+                if (!saved) {
+                  const imported = await readGitHubArchive(source, githubRequest);
+                  if (imported.status !== 'verified') {
+                    const outcomes = {
+                      missing: [422, 'GitHub could not find an archive for this commit.'],
+                      'too-large': [422, 'The compressed archive exceeds the 8 MiB import limit.'],
+                      unavailable: [503, 'GitHub did not provide a usable archive. Try again shortly.'],
+                    };
+                    const [status, message] = outcomes[imported.status];
+                    return page(back + `<h2>Archive import unavailable</h2><p>${message}</p><a href="${escapeHtml(returnUrl)}">Return to archive</a>`, status);
+                  }
+                  await workspaces.recordProjectSourceArchive(actor, workspaceId, projectId, source, imported.bytes);
+                }
+                return new Response(null, { status: 303, headers: { Location: returnUrl, 'Cache-Control': 'no-store' } });
+              }
+              return page(back + `<h2>Repository archive</h2><p>${escapeHtml(canonicalName)} · <code>${source.commit}</code></p>
+${saved ? `<p>Imported ${saved.size} bytes on ${new Date(saved.recorded_at).toISOString()} by <code>${saved.recorded_by}</code>.</p>
+<p>SHA-256 <code>${saved.archive_sha256}</code></p><p><a href="${escapeHtml(archiveUrl + '&archive=download')}">Download saved archive</a></p>`
+  : `<p>No archive is saved for this revision.</p>${writable ? '<p>Import the GitHub source archive for this commit, up to 8 MiB compressed.</p><form method="post"><button name="confirm" value="import">Import repository archive</button></form>' : ''}`}`);
+            }
             if (request.method === 'POST' && (!file || !writable)) {
               return page(back + '<h2>Only workspace Owners and Editors can save source files</h2>', 403);
             }
-            const canonicalName = source.owner + '/' + source.repository;
             const fileUrl = file === null ? '' : repositoryFilePreview(url.pathname, canonicalName, source.commit, directory, file, Number(offsetText));
             let expectedBlob;
             if (request.method === 'POST') {
@@ -1018,7 +1065,8 @@ ${offset + pageSize < count ? `<p><a href="${browse(directory, offset + pageSize
             const entries = sources.map(source => {
               const name = source.owner_name + '/' + source.repository_name;
               return `<li><a href="https://github.com/${escapeHtml(name)}/commit/${source.commit_sha}">${escapeHtml(name)} · ${source.commit_sha}</a>
-<p><a href="${escapeHtml(repositoryPreview(url.pathname, name, source.commit_sha))}">Browse files for this revision</a></p>
+<p><a href="${escapeHtml(repositoryPreview(url.pathname, name, source.commit_sha))}">Browse files for this revision</a> ·
+<a href="${escapeHtml(repositoryPreview(url.pathname, name, source.commit_sha) + '&archive=view')}">Repository archive</a></p>
 <p>Tree <code>${source.tree_sha}</code> · Recorded ${new Date(source.recorded_at).toISOString()} by <code>${source.recorded_by}</code></p></li>`;
             });
             return page(`<h2>Repository revisions</h2><p><a href="${url.pathname}?saved=files">Saved source files</a></p>${entries.length ? '<p>Showing up to 50 recently recorded revisions.</p><ol>' + entries.join('') + '</ol>' : '<p>No repository revisions recorded.</p>'}
@@ -1050,7 +1098,7 @@ ${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
           const backToProject = `<a href="${navigationProject.path}">Back to project</a>`;
           if (project.role !== 'owner') return page(backToProject + '<h2>Only workspace owners can delete projects</h2>', 403);
           if (request.method === 'GET') return page(backToProject + `<h2>Delete ${escapeHtml(project.name)}?</h2>
-<p>Only projects with no missions or saved drafts can be deleted. Deleting a project also removes its recorded repository revisions and saved source files.</p>
+<p>Only projects with no missions or saved drafts can be deleted. Deleting a project also removes its recorded revisions, saved source files, and repository archives.</p>
 <form method="post"><input type="hidden" name="expectedName" value="${escapeHtml(project.name)}">
 <button>Delete project permanently</button></form>`);
           if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/x-www-form-urlencoded') {
