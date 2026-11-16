@@ -1,4 +1,7 @@
+import { createHash } from 'node:crypto';
+
 const fullSha = /^[a-f0-9]{40}$/;
+const filePreviewLimit = 65_536;
 const repositoryUrl = /^https:\/\/github\.com\/([a-z0-9](?:[a-z0-9-]{0,38}))\/([a-z0-9_.-]{1,100})\/?$/i;
 
 export function parseGitHubSource(repository, revision) {
@@ -59,4 +62,34 @@ export async function inspectGitHubDirectory(source, root, segments, request = f
     if (!child) return { status: 'missing' };
     sha = child.sha;
   }
+}
+
+export function isRegularGitHubFile(entry) {
+  return entry.type === 'blob' && ['100644', '100755'].includes(entry.mode);
+}
+
+export async function readGitHubTextFile(source, entry, request = fetch) {
+  if (!isRegularGitHubFile(entry)) return { status: 'unsupported' };
+  if (entry.size > filePreviewLimit) return { status: 'too-large' };
+  const result = await readGitHubObject(source, 'blobs', entry.sha, request, AbortSignal.timeout(5000), 106_496);
+  if (result.status !== 'verified') return { status: result.status };
+  const { content, encoding, size } = result.data;
+  if (encoding !== 'base64' || typeof content !== 'string' || !Number.isInteger(size) || size < 0) {
+    return { status: 'unavailable' };
+  }
+  if (size > filePreviewLimit) return { status: 'too-large' };
+  const base64 = content.replace(/[\r\n]/g, '');
+  const bytes = Buffer.from(base64, 'base64');
+  if (bytes.length !== size || bytes.toString('base64') !== base64 ||
+    (Number.isInteger(entry.size) && entry.size !== size)) return { status: 'unavailable' };
+  const sha = createHash('sha1').update('blob ' + size + '\0').update(bytes).digest('hex');
+  if (sha !== entry.sha) return { status: 'unavailable' };
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return { status: 'unsupported' };
+  }
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return { status: 'unsupported' };
+  return { status: 'verified', size, text };
 }

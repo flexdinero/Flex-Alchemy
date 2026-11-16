@@ -19,6 +19,9 @@ test('hosted intake derives identity from a real expiring database session', asy
   const githubCommit = 'a'.repeat(40);
   const githubTree = 'b'.repeat(40);
   const githubNestedTree = 'd'.repeat(40);
+  const githubFile = Buffer.from('<script>alert("source")</script>\n');
+  const githubBlob = createHash('sha1').update('blob ' + githubFile.length + '\0').update(githubFile).digest('hex');
+  let alterGitHubBlob = false;
   const handle = hostedApi({ pool, publicOrigin, async githubRequest(url, options) {
     githubCalls++;
     assert.equal(options.redirect, 'error');
@@ -27,7 +30,14 @@ test('hosted intake derives identity from a real expiring database session', asy
       return Response.json({ sha: githubTree, tree: [{ path: 'src', type: 'tree', sha: githubNestedTree }] });
     }
     if (url === base + 'trees/' + githubNestedTree) {
-      return Response.json({ sha: githubNestedTree, tree: [{ path: 'index<&>.js', type: 'blob', sha: 'e'.repeat(40) }] });
+      return Response.json({ sha: githubNestedTree, tree: [
+        { path: 'index<&>.js', type: 'blob', mode: '100644', sha: githubBlob, size: githubFile.length },
+        { path: 'shortcut', type: 'blob', mode: '120000', sha: githubBlob, size: githubFile.length },
+      ] });
+    }
+    if (url === base + 'blobs/' + githubBlob) {
+      return Response.json({ sha: githubBlob, encoding: 'base64', size: githubFile.length,
+        content: (alterGitHubBlob ? Buffer.alloc(githubFile.length, 'a') : githubFile).toString('base64') });
     }
     const expected = base + 'commits/';
     assert.ok(url.startsWith(expected));
@@ -241,6 +251,14 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal(nested.status, 200);
       assert.match(nested.body, /index&lt;&amp;&gt;\.js/);
       assert.match(nested.body, /Parent directory/);
+      const filePath = previewPath + '&' + new URLSearchParams({ directory: 'src', file: 'index<&>.js' });
+      const file = await visit(filePath, viewerHeaders);
+      assert.equal(file.status, 200);
+      assert.match(file.body, /&lt;script&gt;alert\(&quot;source&quot;\)&lt;\/script&gt;/);
+      assert.doesNotMatch(file.body, /<script>/);
+      alterGitHubBlob = true;
+      assert.equal((await visit(filePath, viewerHeaders)).status, 503);
+      assert.equal((await visit(previewPath + '&directory=src&file=shortcut', viewerHeaders)).status, 404);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);

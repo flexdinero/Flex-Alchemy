@@ -4,7 +4,7 @@ import { sessionStore } from '../../db/session-store.mjs';
 import { readFile } from 'node:fs/promises';
 import { retrieve } from '../../docs/flex-alchemy/knowledge/retrieve.mjs';
 import { randomUUID } from 'node:crypto';
-import { inspectGitHubDirectory, parseGitHubSource, verifyGitHubSource } from './github-source.mjs';
+import { inspectGitHubDirectory, isRegularGitHubFile, parseGitHubSource, readGitHubTextFile, verifyGitHubSource } from './github-source.mjs';
 
 const style = await readFile(new URL('../local/style.css', import.meta.url), 'utf8');
 
@@ -14,6 +14,8 @@ const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/
 const accountIdPattern = new RegExp('^' + id + '$');
 const browsableDirectory = path => path.length <= 700 && path.split('/').length <= 8
   && path.split('/').every(part => part && !['.', '..'].includes(part) && !/[\u0000-\u001f\u007f]/.test(part));
+const previewableName = name => name.length > 0 && name.length <= 255
+  && !name.includes('/') && name !== '.' && name !== '..' && !/[\u0000-\u001f\u007f]/.test(name);
 const repositoryPreview = (path, name, commit, directory = '', offset = 0) => path + '?'
   + new URLSearchParams({ repository: name, commit, ...(directory ? { directory } : {}), ...(offset ? { offset: String(offset) } : {}) });
 const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions|/repository)?$');
@@ -897,8 +899,10 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
             const commit = url.searchParams.get('commit') ?? '';
             const source = parseGitHubSource('https://github.com/' + name, commit);
             const directory = url.searchParams.get('directory') ?? '';
+            const file = url.searchParams.get('file');
             const offsetText = url.searchParams.get('offset') ?? '0';
-            if (!source || (directory && !browsableDirectory(directory)) || !/^\d{1,5}$/.test(offsetText)) {
+            if (!source || (directory && !browsableDirectory(directory)) || !/^\d{1,5}$/.test(offsetText)
+              || (file !== null && !previewableName(file))) {
               return page(back + '<h2>Invalid repository preview address</h2>', 400);
             }
             const recorded = await workspaces.projectSource(actor, workspaceId, projectId, source);
@@ -922,12 +926,34 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
               return page(back + '<h2>Repository preview page unavailable</h2>', 404);
             }
             const browse = (path, start) => escapeHtml(repositoryPreview(url.pathname, canonicalName, source.commit, path, start));
+            if (file !== null) {
+              const returnToDirectory = `<a href="${browse(directory, offset)}">Back to directory</a>`;
+              const entry = listing.entries.find(item => item.path === file && isRegularGitHubFile(item));
+              if (!entry) return page(returnToDirectory + '<h2>Source file unavailable</h2>', 404);
+              const result = await readGitHubTextFile(source, entry, githubRequest);
+              if (result.status !== 'verified') {
+                const errors = {
+                  missing: [404, 'GitHub could not find this file.'],
+                  unsupported: [422, 'This file cannot be displayed as UTF-8 text.'],
+                  'too-large': [422, 'The file exceeds the 64 KiB preview limit.'],
+                  unavailable: [503, 'GitHub did not return verifiable file contents. Try again shortly.'],
+                };
+                const [status, message] = errors[result.status];
+                return page(returnToDirectory + '<h2>Source preview unavailable</h2><p>' + message + '</p>' + openGitHub, status);
+              }
+              return page(returnToDirectory + `<h2>${escapeHtml(file)}</h2>
+<p>${escapeHtml(canonicalName)} · Commit <code>${source.commit}</code></p>
+<p>Blob <code>${entry.sha}</code> · ${result.size} bytes</p>
+${result.size ? `<pre><code>${escapeHtml(result.text)}</code></pre>` : '<p>This file is empty.</p>'}`);
+            }
             const rows = listing.entries.slice(offset, offset + pageSize).map(entry => {
               const childPath = [...segments, entry.path].join('/');
               const label = escapeHtml(entry.path);
               const type = { tree: 'Directory', blob: 'File', commit: 'Submodule' }[entry.type];
-              return `<li>${entry.type === 'tree' && browsableDirectory(childPath)
-                ? `<a href="${browse(childPath)}">${label}</a>` : `<code>${label}</code>`} · ${type}</li>`;
+              const href = entry.type === 'tree' && browsableDirectory(childPath) ? browse(childPath)
+                : isRegularGitHubFile(entry) && previewableName(entry.path)
+                  ? browse(directory, offset) + '&amp;' + escapeHtml(new URLSearchParams({ file: entry.path }).toString()) : '';
+              return `<li>${href ? `<a href="${href}">${label}</a>` : `<code>${label}</code>`} · ${type}</li>`;
             });
             return page(back + `<h2>Repository preview</h2><p>${escapeHtml(canonicalName)} · <code>${source.commit}</code></p>
 <p>Directory <code>/${escapeHtml(directory)}</code></p>${directory ? `<p><a href="${browse(segments.slice(0, -1).join('/'))}">Parent directory</a></p>` : ''}${openGitHub}
