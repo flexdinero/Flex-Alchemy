@@ -4,6 +4,8 @@ The hosted request handler serves workspace, project and mission listing, projec
 
 Open **Account** to find your Flex Alchemy account ID, see which workspaces you can access, and sign out of the current browser. If you need workspace access, share the account ID with your workspace administrator. Your sign-in provider manages account recovery.
 
+After migration 040, a signed-in user can choose **Create a workspace** from the workspace chooser. Creation adds the first Owner membership in the same transaction. Retrying the same form opens the original workspace if the creator still owns it. Operator provisioning remains available for managed workspaces.
+
 After migration 033, open **Repository** inside a project to record the exact commit and tree identifiers of a public GitHub revision. Owners and Editors can submit a repository URL and full commit SHA. Viewers can inspect the recorded revisions. GitHub is queried without credentials, and the recorded data consists of identifiers and attribution. The workflow does not download or execute repository files.
 
 Use **Browse files for this revision** to inspect directory entries at the recorded tree. The preview follows directory references from that tree, lists up to 100 entries per page, and links to the pinned revision on GitHub for larger or deeper directories. Select a regular file to inspect up to 64 KiB of UTF-8 text. The server checks the returned bytes against the Git blob hash and escapes text in the page. Symlinks and submodules are displayed as tree entries only.

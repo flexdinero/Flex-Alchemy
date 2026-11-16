@@ -19,6 +19,9 @@ export async function checkDatabase(pool) {
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = 'alchemy' AND c.relname IN ('workspaces','memberships','projects','missions','mission_reviews','mission_catalog_checks','mission_revisions','mission_drafts','source_suppressions','mission_plans','mission_plan_decisions','plan_approval_withdrawals','project_submissions','project_source_revisions','project_source_files','project_source_archives','archive_release_candidates'))
       AND has_table_privilege(current_user, 'alchemy.projects', 'INSERT')
+      AND has_function_privilege(current_user, 'alchemy.create_owned_workspace(uuid,text)', 'EXECUTE')
+      AND NOT has_table_privilege(current_user, 'alchemy.workspaces', 'INSERT')
+      AND NOT has_any_column_privilege(current_user, 'alchemy.workspaces', 'INSERT')
       AND has_table_privilege(current_user, 'alchemy.project_source_revisions', 'INSERT')
       AND NOT has_table_privilege(current_user, 'alchemy.project_source_revisions', 'UPDATE,DELETE')
       AND has_table_privilege(current_user, 'alchemy.project_source_files', 'INSERT')

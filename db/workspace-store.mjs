@@ -64,6 +64,11 @@ export function workspaceStore(pool) {
   }
 
   return {
+    createOwnedWorkspace(actorId, requestKey, name) {
+      return asActor(actorId, async client => (
+        await client.query('SELECT * FROM alchemy.create_owned_workspace($1,$2)', [requestKey, name])
+      ).rows[0]);
+    },
     releaseActivationOptions(actorId, workspaceId, projectId, candidateId) {
       return asActor(actorId, async client => (
         await client.query(`SELECT d.environment, active.id AS previous_id, active.candidate_id AS current_candidate_id,

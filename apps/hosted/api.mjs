@@ -221,12 +221,35 @@ ${browserFlow ? `<p><a href="${escapeHtml(signInPath)}">Sign in</a></p>` : '<p>S
 <h3>Signed in with no workspace?</h3><p>Ask a workspace owner or administrator to check your membership and confirm which account to use.</p>
 ${browserFlow ? '<p><a href="/auth/sign-in">Try signing in again</a></p>' : ''}`);
       }
+      if (url.pathname === '/workspaces/new' && ['GET', 'POST'].includes(request.method)) {
+        if (!actor) return signedOut();
+        const render = (name = '', key = randomUUID(), message = '', status = 200) => page(`<a href="/">Back to workspaces</a>
+<h2>Create a workspace</h2><p>You’ll be the first owner. You can add teammates from Team access.</p>
+${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
+<form method="post"><input type="hidden" name="request" value="${escapeHtml(key)}">
+<label for="workspace-name">Workspace name</label><input id="workspace-name" name="name" maxlength="100" required value="${escapeHtml(name)}">
+<button>Create workspace</button></form>`, status);
+        if (request.method === 'GET') return render();
+        if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+          return render('', randomUUID(), 'Submit the workspace form.', 415);
+        }
+        const form = new URLSearchParams(await request.text());
+        const key = form.get('request');
+        const name = (form.get('name') ?? '').trim().slice(0, 101);
+        if (form.size !== 2 || !accountIdPattern.test(key ?? '') || !name || name.length > 100 || name.includes('\0')) {
+          return render(name.replaceAll('\0', ''), accountIdPattern.test(key ?? '') ? key : randomUUID(), 'Enter a workspace name of 1 to 100 characters.', 400);
+        }
+        const result = await workspaces.createOwnedWorkspace(actor, key, name);
+        if (result.status === 'conflict') return render(name, randomUUID(), 'This request already belongs to a workspace. Return to Workspaces or submit a new request.', 409);
+        if (result.status === 'invalid') return render(name, key, 'This account could not create a workspace. Sign in again and retry.', 403);
+        return new Response(null, { status: 303, headers: { Location: '/workspaces/' + result.workspace_id, 'Cache-Control': 'no-store' } });
+      }
       if (request.method === 'GET' && url.pathname === '/') {
         if (!actor) return page(browserFlow
           ? `<h2>Direct work and review the evidence</h2><p>Use Flex Alchemy to define project missions, review decisions, and inspect saved source catalog checks.</p><p><a href="/auth/sign-in">Sign in</a></p><p><a href="/access-help">Get workspace access</a></p>`
           : '<p>Sign-in is currently unavailable.</p>');
         const entries = await workspaces.listWorkspaces(actor);
-        return page('<h2>Your workspaces</h2>' + (entries.length
+        return page('<h2>Your workspaces</h2><p><a href="/workspaces/new">Create a workspace</a></p>' + (entries.length
           ? workspaceLinks(entries)
           : '<p>No workspaces available. Contact your workspace administrator for access.</p><p><a href="/access-help">Get workspace access</a></p>') +
           (entries.length ? '<section><h2>Recent activity</h2>' + activityList(await workspaces.recentActivity(actor), { showWorkspace: true }) + '</section>' : '') +
