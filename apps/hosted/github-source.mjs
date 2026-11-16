@@ -91,5 +91,5 @@ export async function readGitHubTextFile(source, entry, request = fetch) {
     return { status: 'unsupported' };
   }
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return { status: 'unsupported' };
-  return { status: 'verified', size, text };
+  return { status: 'verified', size, text, bytes };
 }

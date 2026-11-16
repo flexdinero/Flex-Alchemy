@@ -13,14 +13,16 @@ export async function checkDatabase(pool) {
       NOT (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolcanlogin) AS restricted
       FROM pg_catalog.pg_roles WHERE rolname = current_user`);
     const { rows: [schema] } = await client.query(`SELECT
-      (SELECT count(*) = 14 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity
+      (SELECT count(*) = 15 AND bool_and(c.relrowsecurity AND c.relforcerowsecurity
         AND NOT pg_has_role(current_user, c.relowner, 'MEMBER')
         AND has_table_privilege(current_user, c.oid, 'SELECT'))
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'alchemy' AND c.relname IN ('workspaces','memberships','projects','missions','mission_reviews','mission_catalog_checks','mission_revisions','mission_drafts','source_suppressions','mission_plans','mission_plan_decisions','plan_approval_withdrawals','project_submissions','project_source_revisions'))
+        WHERE n.nspname = 'alchemy' AND c.relname IN ('workspaces','memberships','projects','missions','mission_reviews','mission_catalog_checks','mission_revisions','mission_drafts','source_suppressions','mission_plans','mission_plan_decisions','plan_approval_withdrawals','project_submissions','project_source_revisions','project_source_files'))
       AND has_table_privilege(current_user, 'alchemy.projects', 'INSERT')
       AND has_table_privilege(current_user, 'alchemy.project_source_revisions', 'INSERT')
       AND NOT has_table_privilege(current_user, 'alchemy.project_source_revisions', 'UPDATE,DELETE')
+      AND has_table_privilege(current_user, 'alchemy.project_source_files', 'INSERT')
+      AND NOT has_table_privilege(current_user, 'alchemy.project_source_files', 'UPDATE,DELETE')
       AND has_table_privilege(current_user, 'alchemy.projects', 'DELETE')
       AND has_column_privilege(current_user, 'alchemy.projects', 'name', 'UPDATE')
       AND has_column_privilege(current_user, 'alchemy.projects', 'purpose', 'UPDATE')

@@ -64,6 +64,29 @@ export function workspaceStore(pool) {
   }
 
   return {
+    projectSourceFile(actorId, workspaceId, projectId, source, path) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT blob_sha, content, recorded_by, recorded_at FROM alchemy.project_source_files
+          WHERE workspace_id = $1 AND project_id = $2 AND owner_name = $3 AND repository_name = $4
+          AND commit_sha = $5 AND file_path = $6`,
+        [workspaceId, projectId, source.owner, source.repository, source.commit, path])
+      ).rows[0] ?? null);
+    },
+    projectSourceFiles(actorId, workspaceId, projectId) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT owner_name, repository_name, commit_sha, file_path, blob_sha
+          FROM alchemy.project_source_files WHERE workspace_id = $1 AND project_id = $2
+          ORDER BY recorded_at DESC, owner_name, repository_name, commit_sha, file_path LIMIT 50`,
+        [workspaceId, projectId])
+      ).rows);
+    },
+    recordProjectSourceFile(actorId, workspaceId, projectId, source, path, blob, content) {
+      return asActor(actorId, client => client.query(`INSERT INTO alchemy.project_source_files
+        (workspace_id, project_id, owner_name, repository_name, commit_sha, file_path, blob_sha, content, recorded_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (workspace_id, project_id, owner_name, repository_name, commit_sha, file_path) DO NOTHING`,
+      [workspaceId, projectId, source.owner, source.repository, source.commit, path, blob, content, actorId]));
+    },
     projectSource(actorId, workspaceId, projectId, source) {
       return asActor(actorId, async client => (
         await client.query(`SELECT tree_sha FROM alchemy.project_source_revisions

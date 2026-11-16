@@ -8,6 +8,8 @@ After migration 033, open **Repository** inside a project to record the exact co
 
 Use **Browse files for this revision** to inspect directory entries at the recorded tree. The preview follows directory references from that tree, lists up to 100 entries per page, and links to the pinned revision on GitHub for larger or deeper directories. Select a regular file to inspect up to 64 KiB of UTF-8 text. The server checks the returned bytes against the Git blob hash and escapes text in the page. Symlinks and submodules are displayed as tree entries only.
 
+After migration 034, Owners and Editors can use **Save file to project** to store the verified bytes. All project members can reopen saved files from **Repository → Saved source files** without a GitHub request. Each snapshot retains its commit, path, blob ID, and attribution.
+
 With migration 029 applied, **Sign out of other Flex Alchemy sessions** revokes the account's other app sessions and keeps the current browser signed in. Provider-managed sessions are controlled through the identity provider.
 
 Workspace members can open **Recent activity** for the latest 50 recorded mission creations and review decisions. Each entry links to its mission. Earlier missions without a recorded creation timestamp still show their recorded reviews.

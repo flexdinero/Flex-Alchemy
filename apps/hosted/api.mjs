@@ -18,6 +18,8 @@ const previewableName = name => name.length > 0 && name.length <= 255
   && !name.includes('/') && name !== '.' && name !== '..' && !/[\u0000-\u001f\u007f]/.test(name);
 const repositoryPreview = (path, name, commit, directory = '', offset = 0) => path + '?'
   + new URLSearchParams({ repository: name, commit, ...(directory ? { directory } : {}), ...(offset ? { offset: String(offset) } : {}) });
+const repositoryFilePreview = (path, name, commit, directory, file, offset) =>
+  repositoryPreview(path, name, commit, directory, offset) + '&' + new URLSearchParams({ file });
 const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions|/repository)?$');
 const missions = new RegExp('^/api/workspaces/(' + id + ')/projects/(' + id + ')/missions$');
 const reviewRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')/missions/(' + id + ')(/export|/sources|/verification|/revise|/plan)?$');
@@ -893,23 +895,65 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
         navigationWorkspace = { id: workspaceId, role: project.role };
         navigationProject = { path: `/workspaces/${workspaceId}/projects/${projectId}`, name: project.name };
         if (action === '/repository') {
-          if (request.method === 'GET' && (url.searchParams.has('commit') || url.searchParams.has('repository'))) {
+          const writable = ['owner', 'editor'].includes(project.role);
+          if (request.method === 'GET' && url.searchParams.get('saved') === 'files') {
+            const savedFiles = await workspaces.projectSourceFiles(actor, workspaceId, projectId);
+            const items = savedFiles.map(source => {
+              const name = source.owner_name + '/' + source.repository_name;
+              const parts = source.file_path.split('/');
+              const file = parts.pop();
+              const link = repositoryFilePreview(url.pathname, name, source.commit_sha, parts.join('/'), file);
+              return `<li><a href="${escapeHtml(link)}">${escapeHtml(source.file_path)}</a> · ${escapeHtml(name)} · <code>${source.commit_sha}</code></li>`;
+            });
+            return page(`<a href="${url.pathname}">Back to repository revisions</a><h2>Saved source files</h2>` + (items.length
+              ? '<p>Showing up to 50 recently saved files.</p><ol>' + items.join('') + '</ol>'
+              : '<p>No source files are saved. Open a recorded revision and choose a file to save.</p>'));
+          }
+          if (url.searchParams.has('commit') || url.searchParams.has('repository')) {
             const back = `<a href="${url.pathname}">Back to repository revisions</a>`;
             const name = url.searchParams.get('repository') ?? '';
             const commit = url.searchParams.get('commit') ?? '';
             const source = parseGitHubSource('https://github.com/' + name, commit);
             const directory = url.searchParams.get('directory') ?? '';
             const file = url.searchParams.get('file');
+            const filePath = file === null ? null : [directory, file].filter(Boolean).join('/');
             const offsetText = url.searchParams.get('offset') ?? '0';
             if (!source || (directory && !browsableDirectory(directory)) || !/^\d{1,5}$/.test(offsetText)
-              || (file !== null && !previewableName(file))) {
+              || (file !== null && (!previewableName(file) || Buffer.byteLength(filePath) > 2000))) {
               return page(back + '<h2>Invalid repository preview address</h2>', 400);
+            }
+            if (request.method === 'POST' && (!file || !writable)) {
+              return page(back + '<h2>Only workspace Owners and Editors can save source files</h2>', 403);
+            }
+            const canonicalName = source.owner + '/' + source.repository;
+            const fileUrl = file === null ? '' : repositoryFilePreview(url.pathname, canonicalName, source.commit, directory, file, Number(offsetText));
+            let expectedBlob;
+            if (request.method === 'POST') {
+              if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+                return page(back + '<h2>Submit the save source form</h2>', 415);
+              }
+              const form = new URLSearchParams(await request.text());
+              expectedBlob = form.get('blob');
+              if (form.size !== 1 || !/^[a-f0-9]{40}$/.test(expectedBlob ?? '')) {
+                return page(back + '<h2>Invalid source save confirmation</h2>', 400);
+              }
+            }
+            const saved = filePath === null ? null : await workspaces.projectSourceFile(actor, workspaceId, projectId, source, filePath);
+            const redirectToFile = () => new Response(null, { status: 303, headers: { Location: fileUrl, 'Cache-Control': 'no-store' } });
+            if (saved) {
+              if (request.method === 'POST') return expectedBlob === saved.blob_sha ? redirectToFile()
+                : page(back + '<h2>The saved source does not match this confirmation</h2>', 409);
+              const content = new TextDecoder('utf-8', { fatal: true }).decode(saved.content);
+              return page(`<a href="${url.pathname}?saved=files">Back to saved source files</a><h2>${escapeHtml(file)}</h2>
+<p>${escapeHtml(canonicalName)} · Commit <code>${source.commit}</code></p>
+<p>Blob <code>${saved.blob_sha}</code> · ${saved.content.byteLength} bytes</p>
+<p>Saved ${new Date(saved.recorded_at).toISOString()} by <code>${saved.recorded_by}</code></p>
+${saved.content.byteLength ? `<pre><code>${escapeHtml(content)}</code></pre>` : '<p>This file is empty.</p>'}`);
             }
             const recorded = await workspaces.projectSource(actor, workspaceId, projectId, source);
             if (!recorded) return page(back + '<h2>Repository revision unavailable</h2>', 404);
             const segments = directory ? directory.split('/') : [];
             const listing = await inspectGitHubDirectory(source, recorded.tree_sha, segments, githubRequest);
-            const canonicalName = source.owner + '/' + source.repository;
             const github = `https://github.com/${canonicalName}/tree/${source.commit}`;
             const openGitHub = `<p><a href="${github}">Open the pinned revision on GitHub</a></p>`;
             if (listing.status !== 'verified') {
@@ -930,6 +974,9 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
               const returnToDirectory = `<a href="${browse(directory, offset)}">Back to directory</a>`;
               const entry = listing.entries.find(item => item.path === file && isRegularGitHubFile(item));
               if (!entry) return page(returnToDirectory + '<h2>Source file unavailable</h2>', 404);
+              if (request.method === 'POST' && entry.sha !== expectedBlob) {
+                return page(returnToDirectory + '<h2>Source file no longer matches the save confirmation</h2>', 409);
+              }
               const result = await readGitHubTextFile(source, entry, githubRequest);
               if (result.status !== 'verified') {
                 const errors = {
@@ -941,9 +988,14 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
                 const [status, message] = errors[result.status];
                 return page(returnToDirectory + '<h2>Source preview unavailable</h2><p>' + message + '</p>' + openGitHub, status);
               }
+              if (request.method === 'POST') {
+                await workspaces.recordProjectSourceFile(actor, workspaceId, projectId, source, filePath, entry.sha, result.bytes);
+                return redirectToFile();
+              }
               return page(returnToDirectory + `<h2>${escapeHtml(file)}</h2>
 <p>${escapeHtml(canonicalName)} · Commit <code>${source.commit}</code></p>
 <p>Blob <code>${entry.sha}</code> · ${result.size} bytes</p>
+${writable ? `<form method="post" action="${escapeHtml(fileUrl)}"><input type="hidden" name="blob" value="${entry.sha}"><button>Save file to project</button></form>` : ''}
 ${result.size ? `<pre><code>${escapeHtml(result.text)}</code></pre>` : '<p>This file is empty.</p>'}`);
             }
             const rows = listing.entries.slice(offset, offset + pageSize).map(entry => {
@@ -951,7 +1003,7 @@ ${result.size ? `<pre><code>${escapeHtml(result.text)}</code></pre>` : '<p>This 
               const label = escapeHtml(entry.path);
               const type = { tree: 'Directory', blob: 'File', commit: 'Submodule' }[entry.type];
               const href = entry.type === 'tree' && browsableDirectory(childPath) ? browse(childPath)
-                : isRegularGitHubFile(entry) && previewableName(entry.path)
+                : isRegularGitHubFile(entry) && previewableName(entry.path) && Buffer.byteLength(childPath) <= 2000
                   ? browse(directory, offset) + '&amp;' + escapeHtml(new URLSearchParams({ file: entry.path }).toString()) : '';
               return `<li>${href ? `<a href="${href}">${label}</a>` : `<code>${label}</code>`} · ${type}</li>`;
             });
@@ -961,7 +1013,6 @@ ${count ? `<p>Showing ${offset + 1}–${Math.min(offset + pageSize, count)} of $
 ${offset ? `<p><a href="${browse(directory, offset - pageSize)}">Previous entries</a></p>` : ''}
 ${offset + pageSize < count ? `<p><a href="${browse(directory, offset + pageSize)}">Next entries</a></p>` : ''}`);
           }
-          const writable = ['owner', 'editor'].includes(project.role);
           const render = async (status = 200, message = '', repository = '', revision = '') => {
             const sources = await workspaces.projectSources(actor, workspaceId, projectId);
             const entries = sources.map(source => {
@@ -970,7 +1021,7 @@ ${offset + pageSize < count ? `<p><a href="${browse(directory, offset + pageSize
 <p><a href="${escapeHtml(repositoryPreview(url.pathname, name, source.commit_sha))}">Browse files for this revision</a></p>
 <p>Tree <code>${source.tree_sha}</code> · Recorded ${new Date(source.recorded_at).toISOString()} by <code>${source.recorded_by}</code></p></li>`;
             });
-            return page(`<h2>Repository revisions</h2>${entries.length ? '<p>Showing up to 50 recently recorded revisions.</p><ol>' + entries.join('') + '</ol>' : '<p>No repository revisions recorded.</p>'}
+            return page(`<h2>Repository revisions</h2><p><a href="${url.pathname}?saved=files">Saved source files</a></p>${entries.length ? '<p>Showing up to 50 recently recorded revisions.</p><ol>' + entries.join('') + '</ol>' : '<p>No repository revisions recorded.</p>'}
 ${writable ? `<section><h3>Record a public GitHub revision</h3>
 <p>Flex Alchemy checks the commit and saves its tree identifier as project evidence.</p>
 ${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
@@ -999,7 +1050,7 @@ ${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
           const backToProject = `<a href="${navigationProject.path}">Back to project</a>`;
           if (project.role !== 'owner') return page(backToProject + '<h2>Only workspace owners can delete projects</h2>', 403);
           if (request.method === 'GET') return page(backToProject + `<h2>Delete ${escapeHtml(project.name)}?</h2>
-<p>Only projects with no missions or saved drafts can be deleted. Deleting a project also removes its recorded repository revisions.</p>
+<p>Only projects with no missions or saved drafts can be deleted. Deleting a project also removes its recorded repository revisions and saved source files.</p>
 <form method="post"><input type="hidden" name="expectedName" value="${escapeHtml(project.name)}">
 <button>Delete project permanently</button></form>`);
           if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/x-www-form-urlencoded') {
