@@ -108,6 +108,10 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
       headers: { Cookie: comeback.headers.getSetCookie()[0].split(';')[0] },
     }));
     assert.equal(denied.status, 404);
+    const invitation = '/invite/00000000-0000-4000-8000-000000000002';
+    const invitationRedirect = await handle(new Request(publicOrigin + invitation));
+    assert.equal(invitationRedirect.status, 303);
+    assert.equal((await callback(await begin(invitationRedirect.headers.get('location')))).headers.get('location'), invitation);
     for (const returnPath of ['//evil.example', '//', '/\\evil.example', '/workspaces/../auth/sign-out', 'https://evil.example']) {
       const externalAttempt = await begin('/auth/sign-in?' + new URLSearchParams({ return: returnPath }));
       assert.equal((await callback(externalAttempt)).headers.get('location'), '/');

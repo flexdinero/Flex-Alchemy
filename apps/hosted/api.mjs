@@ -11,7 +11,8 @@ const style = await readFile(new URL('../local/style.css', import.meta.url), 'ut
 
 const id = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}';
 const projects = new RegExp('^/api/workspaces/(' + id + ')/projects$');
-const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/team/grant|/knowledge|/settings/audit|/reviews|/projects/new)?$');
+const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/team/grant|/team/invitations|/knowledge|/settings/audit|/reviews|/projects/new)?$');
+const invitationRoute = new RegExp('^/invite/(' + id + ')$');
 const accountIdPattern = new RegExp('^' + id + '$');
 const releaseEnvironments = ['staging', 'production'];
 const browsableDirectory = path => path.length <= 700 && path.split('/').length <= 8
@@ -196,6 +197,42 @@ export function hostedApi({ pool, publicOrigin, browserFlow, githubRequest = fet
       }
       const actor = await sessions.actor(token);
       signedIn = Boolean(actor);
+      if (request.method === 'GET' && url.pathname === '/account/invitations') {
+        if (!actor) return signedOut();
+        const invitations = await workspaces.workspaceInvitations(actor);
+        const rows = invitations.map(invitation => `<li><a href="/invite/${invitation.id}">${escapeHtml(invitation.workspace_name)}</a>
+· ${escapeHtml(invitation.role)} · ${escapeHtml(invitation.state)}</li>`);
+        return page(`<a href="/account">Back to account</a><h2>Workspace invitations</h2>${rows.length
+          ? '<ol>' + rows.join('') + '</ol>' : '<p>You have no workspace invitations.</p>'}`);
+      }
+      const invitationMatch = invitationRoute.exec(url.pathname);
+      if (invitationMatch && ['GET', 'POST'].includes(request.method)) {
+        if (!actor) return signedOut();
+        const back = '<a href="/account/invitations">Back to invitations</a>';
+        const [invitation] = await workspaces.workspaceInvitations(actor, { invitationId: invitationMatch[1] });
+        if (!invitation) return page(back + '<h2>Invitation unavailable for this account</h2><p>If you used a different account, <a href="/account">sign out from Account</a> and open the invitation again.</p>', 404);
+        if (request.method === 'POST') {
+          if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+            return page(back + '<h2>Submit the invitation response form</h2>', 415);
+          }
+          const form = new URLSearchParams(await request.text());
+          const response = form.get('response');
+          if (form.size !== 1 || !['accepted', 'declined'].includes(response)) {
+            return page(back + '<h2>Choose whether to accept or decline</h2>', 400);
+          }
+          const result = await workspaces.respondWorkspaceInvitation(actor, invitation.id, response);
+          if (result !== response) return page(back + '<h2>The invitation is no longer available</h2>', 409);
+          return new Response(null, { status: 303, headers: { 'Cache-Control': 'no-store',
+            Location: response === 'accepted' ? '/workspaces/' + invitation.workspace_id : '/account/invitations' } });
+        }
+        return page(back + `<h2>Invitation to ${escapeHtml(invitation.workspace_name)}</h2>
+<p>Role ${escapeHtml(invitation.role)} · ${escapeHtml(invitation.state)}</p>
+${invitation.state === 'pending' ? `<p>Expires ${new Date(invitation.expires_at).toISOString()}</p>
+<form method="post"><button name="response" value="accepted">Accept invitation</button>
+<button name="response" value="declined">Decline invitation</button></form>` :
+    invitation.state === 'accepted' ? `<p><a href="/workspaces/${invitation.workspace_id}">Open workspace</a></p>`
+      : '<p>Ask a workspace owner for a new invitation if you still need access.</p>'}`);
+      }
       if (request.method === 'POST' && url.pathname === '/account/sessions/revoke-others') {
         if (!actor || !await sessions.revokeOthers(token)) {
           return page('<h2>Sign in required</h2><p><a href="/account">Return to Account</a></p>', 401);
@@ -212,6 +249,7 @@ ${browserFlow ? `<p><a href="${escapeHtml(signInPath)}">Sign in</a></p>` : '<p>S
           ? workspaceLinks(entries)
           : '<p>You do not have access to any workspaces.</p>'}
 <p><a href="/access-help">Get workspace access or recover your sign-in</a></p>
+<p><a href="/account/invitations">Workspace invitations</a></p>
 <form method="post" action="/account/sessions/revoke-others"><button>Sign out of other Flex Alchemy sessions</button></form>
 <form method="post" action="/sign-out"><button>Sign out of this browser</button></form>`);
       }
@@ -387,6 +425,51 @@ ${latest ? `<input type="hidden" name="event" value="${escapeHtml(latest.event_i
 <p>Catalog SHA-256 <code>${catalog.catalogSha256}</code></p>
 ${rows ? '<ul>' + rows + '</ul>' : '<p>No references match your search.</p>'}`);
         }
+        if (workspaceMatch[2] === '/team/invitations') {
+          const teamPath = '/workspaces/' + workspace.id + '/team';
+          const back = `<a href="${teamPath}">Back to team access</a>`;
+          if (workspace.role !== 'owner') return page(back + '<h2>Only workspace owners can manage invitations</h2>', 403);
+          const renderInvitations = async (status = 200, message = '') => {
+            const invitations = await workspaces.workspaceInvitations(actor, { workspaceId: workspace.id });
+            const selected = url.searchParams.get('issued');
+            const rows = invitations.map(invitation => `<li><code>${invitation.invitee_id}</code> · ${escapeHtml(invitation.role)}
+· ${escapeHtml(invitation.state)}${invitation.state === 'pending' ? `<p>Expires ${new Date(invitation.expires_at).toISOString()}</p>
+<p><label for="invitation-${invitation.id}">Share invitation link</label>
+<input id="invitation-${invitation.id}" readonly value="${escapeHtml(publicOrigin + '/invite/' + invitation.id)}"></p>
+<form method="post" action="${url.pathname}"><input type="hidden" name="invitation" value="${invitation.id}">
+<button name="action" value="revoke">Revoke invitation</button></form>` : ''}${selected === invitation.id && invitation.state === 'pending'
+              ? '<p role="status">Invitation ready to share.</p>' : ''}</li>`);
+            return page(back + `<h2>Workspace invitations</h2>
+${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
+${rows.length ? '<ol>' + rows.join('') + '</ol>' : '<p>No invitations have been issued.</p>'}
+<section><h3>Invite a teammate</h3><p>Ask the person for their Flex Alchemy account ID. The invitation can only be accepted by that account.</p>
+<form method="post" action="${url.pathname}">
+<label for="invitee">Account ID</label><input id="invitee" name="invitee" required maxlength="36">
+<label for="invite-role">Workspace role</label><select id="invite-role" name="role" required>
+<option value="">Choose a role</option><option value="viewer">Viewer</option><option value="editor">Editor</option></select>
+<p><button name="action" value="issue">Create invitation</button></p></form></section>`, status);
+          };
+          if (request.method === 'GET') return renderInvitations();
+          if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+            return renderInvitations(415, 'Submit the invitation management form.');
+          }
+          const form = new URLSearchParams(await request.text());
+          const action = form.get('action');
+          const invitee = form.get('invitee')?.trim();
+          const role = form.get('role');
+          const invitation = form.get('invitation');
+          let location = url.pathname;
+          if (action === 'issue' && form.size === 3 && accountIdPattern.test(invitee ?? '') && ['editor', 'viewer'].includes(role)) {
+            const id = await workspaces.issueWorkspaceInvitation(actor, workspace.id, invitee, role);
+            if (!id) return renderInvitations(409, 'Check the account ID and whether the person already has a membership record.');
+            location += '?issued=' + id;
+          } else if (action === 'revoke' && form.size === 2 && accountIdPattern.test(invitation ?? '')) {
+            if (!await workspaces.revokeWorkspaceInvitation(actor, workspace.id, invitation)) return renderInvitations(409, 'The invitation is no longer pending.');
+          } else {
+            return renderInvitations(400, 'Enter a valid account ID and role, or choose a pending invitation to revoke.');
+          }
+          return new Response(null, { status: 303, headers: { Location: location, 'Cache-Control': 'no-store' } });
+        }
         if (workspaceMatch[2] === '/team/grant') {
           const teamPath = '/workspaces/' + workspace.id + '/team';
           const backToTeam = `<a href="${teamPath}">Back to team access</a>`;
@@ -486,7 +569,7 @@ ${escapeHtml(workspace.name)}. Earlier work will retain its attribution.</p>
 <td>${escapeHtml(member.role)}</td><td>${member.revoked_at
   ? 'Revoked ' + escapeHtml(new Date(member.revoked_at).toISOString()) : 'Active'}${!member.revoked_at && member.role !== 'owner' ? ` <a href="${url.pathname}?revoke=${encodeURIComponent(member.actor_id)}" aria-label="Revoke access for ${escapeHtml(member.actor_id)}">Revoke access</a>
 <a href="${url.pathname}?edit-role=${encodeURIComponent(member.actor_id)}" aria-label="Change role for ${escapeHtml(member.actor_id)}">Change role</a>` : ''}</td></tr>`).join('');
-          return page(backToWorkspace + `<h2>Team access for ${escapeHtml(workspace.name)}</h2><p><a href="${url.pathname}/grant">Grant access</a></p><p><a href="/workspaces/${workspace.id}/settings/audit?view=access">Access revocation history</a> · <a href="${url.pathname}?history=roles">Role change history</a></p>
+          return page(backToWorkspace + `<h2>Team access for ${escapeHtml(workspace.name)}</h2><p><a href="${url.pathname}/grant">Grant access</a> · <a href="${url.pathname}/invitations">Manage invitations</a></p><p><a href="/workspaces/${workspace.id}/settings/audit?view=access">Access revocation history</a> · <a href="${url.pathname}?history=roles">Role change history</a></p>
 <table class="team-table"><caption>Workspace memberships</caption><thead><tr>
 <th scope="col">Account ID</th><th scope="col">Role</th><th scope="col">Access</th>
 </tr></thead><tbody>${rows}</tbody></table>`);

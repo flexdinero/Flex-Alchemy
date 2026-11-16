@@ -9,7 +9,8 @@ function returnDestination(path, origin) {
   if (!path || path.length > 2048 || !path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u0020\u007f]/.test(path)) return '/';
   const destination = new URL(path, origin);
   if (destination.origin !== origin) return '/';
-  if (destination.pathname === '/account' || destination.pathname.startsWith('/workspaces/')) {
+  if (['/account', '/account/invitations'].includes(destination.pathname) || destination.pathname.startsWith('/workspaces/') ||
+    /^\/invite\/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(destination.pathname)) {
     return destination.pathname + destination.search;
   }
   return '/';

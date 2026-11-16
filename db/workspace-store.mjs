@@ -64,6 +64,32 @@ export function workspaceStore(pool) {
   }
 
   return {
+    workspaceInvitations(actorId, { workspaceId = null, invitationId = null } = {}) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT id, workspace_id, workspace_name, invitee_id, role, expires_at,
+          CASE WHEN state='pending' AND expires_at <= statement_timestamp() THEN 'expired' ELSE state END AS state
+          FROM alchemy.workspace_invitations
+          WHERE (($1::uuid IS NULL AND invitee_id=$2) OR workspace_id=$1) AND ($3::uuid IS NULL OR id=$3)
+          ORDER BY created_at DESC,id LIMIT 50`, [workspaceId, actorId, invitationId])
+      ).rows);
+    },
+    issueWorkspaceInvitation(actorId, workspaceId, inviteeId, role) {
+      return asActor(actorId, async client => (
+        await client.query('SELECT alchemy.issue_workspace_invitation($1,$2,$3) AS id', [workspaceId, inviteeId, role])
+      ).rows[0].id);
+    },
+    revokeWorkspaceInvitation(actorId, workspaceId, invitationId) {
+      return asActor(actorId, async client => (
+        await client.query(`UPDATE alchemy.workspace_invitations SET state='revoked', decided_at=statement_timestamp(), decided_by=$3
+          WHERE workspace_id=$1 AND id=$2 AND state='pending' AND expires_at > statement_timestamp() RETURNING id`,
+        [workspaceId, invitationId, actorId])
+      ).rows.length > 0);
+    },
+    respondWorkspaceInvitation(actorId, invitationId, response) {
+      return asActor(actorId, async client => (
+        await client.query('SELECT alchemy.respond_workspace_invitation($1,$2) AS status', [invitationId, response])
+      ).rows[0].status);
+    },
     createOwnedWorkspace(actorId, requestKey, name) {
       return asActor(actorId, async client => (
         await client.query('SELECT * FROM alchemy.create_owned_workspace($1,$2)', [requestKey, name])
