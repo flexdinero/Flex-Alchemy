@@ -28,7 +28,7 @@ The founder, operator and expert views use the same records. Every page needs a 
 
 ## Current route inventory
 
-The local server binds to loopback and serves one operator. Hosted customer routes, identity, and workspace isolation remain open. This inventory maps the routes that exist today to the actions users can actually take.
+The local server binds to loopback and serves one operator. This table inventories the local interface. The hosted entry below and the interface map describe the separate authenticated application.
 
 | Route | Entry and controls | Evidence and recovery |
 |---|---|---|
@@ -49,7 +49,11 @@ Route-level HTTP checks cover core interactions. Rendered keyboard and assistive
 
 The shared hosted header links to the workspace chooser and access help. Inside an accessible workspace it links to projects and activity, with Team access visible to owners. The current destination is marked for assistive technology.
 
-After sign-in, the workspace list shows either available workspaces or an instruction to contact the administrator. The administrator provisions the first owner using the verified OIDC issuer and subject, then the founder reloads and opens the workspace. The operator command refuses unknown identities and conflicting or revoked ownership. Owners can open **Team access** from the workspace to inspect account IDs, roles, and active or revoked access. Owners select Revoke access, review the workspace, role and account ID on a confirmation page, then confirm or return to Team access. A stale confirmation reports that the account is no longer eligible. Earlier work retains its attribution. Invitations, role changes, ownership transfer, and account recovery remain open.
+After sign-in, users can open an accessible workspace, create one with themselves as its first Owner, or check their invitations under **Account**. The operator provisioning command is available for managed workspaces and refuses unknown identities and conflicting or revoked ownership.
+
+Owners can open **Team access** to inspect memberships, revoke eligible access with confirmation, and invite existing Flex Alchemy accounts as Viewers or Editors. Recipients can accept or decline from the shared link or their account inbox. Pending invitations expire after seven days and owners can revoke them before use. Earlier work retains its attribution.
+
+Account appearance supports Dark, Light, Match system, and a reset to Dark. The packaged app was exercised with local HTTPS, Keycloak, and PostgreSQL for sign-in, workspace and project creation, cross-workspace denial, reload, appearance persistence, keyboard navigation, and selected automated accessibility checks. Provider recovery and the complete journey still require verification on the deployed app.
 
 ## Hosted source catalog verification
 
