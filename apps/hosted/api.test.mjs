@@ -101,7 +101,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     }));
   }
   try {
-    for (const name of ['001_workspace_boundary.sql', '002_actor_identity.sql', '003_sessions.sql']) {
+    for (const name of ['001_workspace_boundary.sql', '002_actor_identity.sql', '003_sessions.sql', '042_account_appearance.sql']) {
       await db.exec(await readFile(new URL('../../db/migrations/' + name, import.meta.url), 'utf8'));
     }
     const editor = await sessions.issue(identity('editor'));
@@ -278,6 +278,22 @@ test('hosted intake derives identity from a real expiring database session', asy
       const reviewPage = projectPage + '/missions/' + mission.id;
       const reviewerForm = { ...headers, Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' };
       const viewerHeaders = { ...reviewerForm, Cookie: '__Host-alchemy_session=' + viewer };
+      const preferences = '/preferences';
+      const initialPreferences = await visit(preferences, reviewerForm);
+      assert.match(initialPreferences.body, /data-theme="dark"/);
+      assert.doesNotMatch(initialPreferences.body, /Appearance saved/);
+      assert.equal((await visit(preferences, reviewerForm, 'theme=invalid')).status, 400);
+      const savedTheme = await visit(preferences, reviewerForm, 'theme=light');
+      assert.equal(savedTheme.status, 303);
+      assert.match((await visit(savedTheme.headers.location, reviewerForm)).body, /Appearance saved/);
+      assert.match((await visit('/', reviewerForm)).body, /data-theme="light"/);
+      assert.match((await visit('/', viewerHeaders)).body, /data-theme="dark"/);
+      assert.equal((await visit(preferences, reviewerForm, 'theme=system')).status, 303);
+      assert.match((await visit('/', reviewerForm)).body, /data-theme="system"/);
+      const defaultTheme = await visit(preferences, reviewerForm, 'reset=default');
+      assert.equal(defaultTheme.status, 303);
+      assert.match((await visit(defaultTheme.headers.location, reviewerForm)).body, /Default appearance restored/);
+      assert.match((await visit('/', reviewerForm)).body, /data-theme="dark"/);
       const founder = await sessions.issue(identity('self-serve-founder'));
       const founderHeaders = { ...reviewerForm, Cookie: '__Host-alchemy_session=' + founder };
       assert.equal((await visit('/workspaces/new', { Host: headers.Host })).status, 303);

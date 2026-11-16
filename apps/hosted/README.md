@@ -8,6 +8,8 @@ After migration 040, a signed-in user can choose **Create a workspace** from the
 
 After migration 041, workspace owners can open **Team access → Manage invitations** to create a Viewer or Editor invitation for an existing Flex Alchemy account. Share the generated link directly with the recipient. The intended account can also open **Account → Workspace invitations** to accept or decline. Pending invitations expire after seven days and can be revoked before use.
 
+After migration 042, **Account → Appearance preferences** saves Dark, Light, or Match system to the signed-in account. **Use default appearance** deletes the saved choice and restores Dark.
+
 After migration 033, open **Repository** inside a project to record the exact commit and tree identifiers of a public GitHub revision. Owners and Editors can submit a repository URL and full commit SHA. Viewers can inspect the recorded revisions. GitHub is queried without credentials, and the recorded data consists of identifiers and attribution. The workflow does not download or execute repository files.
 
 Use **Browse files for this revision** to inspect directory entries at the recorded tree. The preview follows directory references from that tree, lists up to 100 entries per page, and links to the pinned revision on GitHub for larger or deeper directories. Select a regular file to inspect up to 64 KiB of UTF-8 text. The server checks the returned bytes against the Git blob hash and escapes text in the page. Symlinks and submodules are displayed as tree entries only.

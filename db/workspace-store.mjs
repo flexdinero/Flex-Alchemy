@@ -64,6 +64,18 @@ export function workspaceStore(pool) {
   }
 
   return {
+    accountAppearance(actorId) {
+      return asActor(actorId, async client => (
+        await client.query('SELECT theme FROM alchemy.account_appearance WHERE actor_id = $1', [actorId])
+      ).rows[0]?.theme ?? null);
+    },
+    saveAccountAppearance(actorId, theme) {
+      return asActor(actorId, client => client.query(`INSERT INTO alchemy.account_appearance (actor_id,theme)
+        VALUES ($1,$2) ON CONFLICT (actor_id) DO UPDATE SET theme=EXCLUDED.theme, updated_at=statement_timestamp()`, [actorId, theme]));
+    },
+    resetAccountAppearance(actorId) {
+      return asActor(actorId, client => client.query('DELETE FROM alchemy.account_appearance WHERE actor_id = $1', [actorId]));
+    },
     workspaceInvitations(actorId, { workspaceId = null, invitationId = null } = {}) {
       return asActor(actorId, async client => (
         await client.query(`SELECT id, workspace_id, workspace_name, invitee_id, role, expires_at,

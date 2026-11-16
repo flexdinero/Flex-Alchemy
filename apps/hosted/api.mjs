@@ -14,6 +14,7 @@ const projects = new RegExp('^/api/workspaces/(' + id + ')/projects$');
 const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/team/grant|/team/invitations|/knowledge|/settings/audit|/reviews|/projects/new)?$');
 const invitationRoute = new RegExp('^/invite/(' + id + ')$');
 const accountIdPattern = new RegExp('^' + id + '$');
+const appearanceOptions = { dark: 'Dark', light: 'Light', system: 'Match system' };
 const releaseEnvironments = ['staging', 'production'];
 const browsableDirectory = path => path.length <= 700 && path.split('/').length <= 8
   && path.split('/').every(part => part && !['.', '..'].includes(part) && !/[\u0000-\u001f\u007f]/.test(part));
@@ -98,12 +99,13 @@ function projectNavigation(path, project) {
 <strong>${escapeHtml(project.name)}</strong>${links}</nav>`;
 }
 
-function homePage(content, status = 200, path = '/', workspace = null, project = null, signedIn = false) {
+function homePage(content, status = 200, path = '/', workspace = null, project = null, signedIn = false, appearance = null) {
   const title = status === 404 ? 'Page unavailable' : status >= 500 ? 'Workspace unavailable'
-    : project?.name ?? workspace?.name ?? (path === '/account' ? 'Account' : path === '/access-help' ? 'Access help' : 'Workspaces');
+    : project?.name ?? workspace?.name ?? (path === '/account' ? 'Account' : path === '/preferences' ? 'Preferences'
+      : path === '/access-help' ? 'Access help' : 'Workspaces');
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} | Flex Alchemy</title>
-<link rel="stylesheet" href="/style.css"></head><body class="alchemy-workspace"><a class="skip" href="#main">Skip to content</a>
+<link rel="stylesheet" href="/style.css"></head><body class="alchemy-workspace" data-theme="${escapeHtml(appearance ?? 'dark')}"><a class="skip" href="#main">Skip to content</a>
 ${navigation(path, workspace, signedIn)}
 <div class="workspace-body"><header class="workspace-topbar"><span>Workspace</span><span aria-hidden="true">›</span><strong>${escapeHtml(title)}</strong></header>
 <main id="main" tabindex="-1"><h1>Flex Alchemy</h1>${project ? projectNavigation(path, project) : ''}${content}</main></div></body></html>`, { status, headers: {
@@ -166,7 +168,8 @@ export function hostedApi({ pool, publicOrigin, browserFlow, githubRequest = fet
     let navigationWorkspace = null;
     let navigationProject = null;
     let signedIn = false;
-    const page = (content, status) => homePage(content, status, url.pathname, navigationWorkspace, navigationProject, signedIn);
+    let appearance = null;
+    const page = (content, status) => homePage(content, status, url.pathname, navigationWorkspace, navigationProject, signedIn, appearance);
     const signInPath = '/auth/sign-in?' + new URLSearchParams({ return: url.pathname + url.search });
     const signedOut = () => new Response(null, {
       status: 303, headers: { Location: browserFlow && request.method === 'GET' ? signInPath : '/',
@@ -198,6 +201,41 @@ export function hostedApi({ pool, publicOrigin, browserFlow, githubRequest = fet
       }
       const actor = await sessions.actor(token);
       signedIn = Boolean(actor);
+      if (actor && browserPage) appearance = await workspaces.accountAppearance(actor);
+      if (url.pathname === '/preferences' && ['GET', 'POST'].includes(request.method)) {
+        if (!actor) return signedOut();
+        const render = (status = 200, error = '') => {
+          const current = appearance ?? 'dark';
+          const options = Object.entries(appearanceOptions).map(([value, label]) =>
+            `<option value="${value}"${current === value ? ' selected' : ''}>${label}</option>`).join('');
+          const message = appearance && url.searchParams.get('saved') === appearance ? 'Appearance saved.' :
+            url.searchParams.get('saved') === 'default' && !appearance ? 'Default appearance restored.' : '';
+          return page(`<a href="/account">Back to account</a><h2>Appearance preferences</h2>
+${error ? `<p role="alert">${escapeHtml(error)}</p>` : message ? `<p role="status">${message}</p>` : ''}
+<p>Your choice applies to Flex Alchemy when you sign in.</p>
+<form method="post" action="/preferences">
+<label for="workspace-theme">Color theme</label><select id="workspace-theme" name="theme">${options}</select>
+<p><button>Save appearance</button></p></form>
+${appearance ? '<form method="post" action="/preferences"><button name="reset" value="default">Use default appearance</button></form>' : ''}`, status);
+        };
+        if (request.method === 'GET') return render();
+        if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+          return render(415, 'Submit the appearance form.');
+        }
+        const form = new URLSearchParams(await request.text());
+        const theme = form.get('theme');
+        let saved;
+        if (form.size === 1 && Object.hasOwn(appearanceOptions, theme)) {
+          await workspaces.saveAccountAppearance(actor, theme);
+          saved = theme;
+        } else if (form.size === 1 && form.get('reset') === 'default') {
+          await workspaces.resetAccountAppearance(actor);
+          saved = 'default';
+        } else {
+          return render(400, 'Choose Dark, Light, or Match system.');
+        }
+        return new Response(null, { status: 303, headers: { Location: '/preferences?saved=' + saved, 'Cache-Control': 'no-store' } });
+      }
       if (request.method === 'GET' && url.pathname === '/account/invitations') {
         if (!actor) return signedOut();
         const invitations = await workspaces.workspaceInvitations(actor);
@@ -251,6 +289,7 @@ ${browserFlow ? `<p><a href="${escapeHtml(signInPath)}">Sign in</a></p>` : '<p>S
           : '<p>You do not have access to any workspaces.</p>'}
 <p><a href="/access-help">Get workspace access or recover your sign-in</a></p>
 <p><a href="/account/invitations">Workspace invitations</a></p>
+<p><a href="/preferences">Appearance preferences</a></p>
 <form method="post" action="/account/sessions/revoke-others"><button>Sign out of other Flex Alchemy sessions</button></form>
 <form method="post" action="/sign-out"><button>Sign out of this browser</button></form>`);
       }

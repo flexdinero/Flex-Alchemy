@@ -38,6 +38,13 @@ export async function checkIdentityBrowser({ origin, identityOrigin, ca, passwor
     await context.route('**/*', route => addresses.includes(new URL(route.request().url()).origin)
       ? route.continue() : route.abort());
     const page = await context.newPage();
+    async function signIn(page) {
+      await page.getByRole('link', { name: 'Sign in', exact: true }).click();
+      await page.locator('#username').fill('founder');
+      await page.locator('#password').fill(password);
+      await page.locator('#kc-login').click();
+      await page.getByRole('heading', { name: 'Your workspaces' }).waitFor();
+    }
     async function audit(label) {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
       assert.equal(overflow, false, label + ' fits within the viewport');
@@ -51,11 +58,7 @@ export async function checkIdentityBrowser({ origin, identityOrigin, ca, passwor
     await page.keyboard.press('Enter');
     assert.equal(await page.locator(':focus').getAttribute('id'), 'main');
     await audit('Public entry at 320 px');
-    await page.getByRole('link', { name: 'Sign in', exact: true }).click();
-    await page.locator('#username').fill('founder');
-    await page.locator('#password').fill(password);
-    await page.locator('#kc-login').click();
-    await page.getByRole('heading', { name: 'Your workspaces' }).waitFor();
+    await signIn(page);
     await page.getByRole('link', { name: 'Create a workspace' }).click();
     await page.getByRole('heading', { name: 'Create a workspace' }).waitFor();
     await audit('Workspace setup at 320 px');
@@ -81,7 +84,42 @@ export async function checkIdentityBrowser({ origin, identityOrigin, ca, passwor
     await audit('Workspace at 1440 px');
     await page.getByRole('link', { name: 'Team access', exact: true }).click();
     await audit('Team access at 1440 px');
-    console.log('Browser sign-in, keyboard skip link, workspace and project creation, reload, responsive layout, and axe checks passed.');
+    await page.getByRole('link', { name: 'Account', exact: true }).click();
+    await page.getByRole('link', { name: 'Appearance preferences', exact: true }).click();
+    const theme = page.getByLabel('Color theme');
+    await theme.selectOption('light');
+    await page.getByRole('button', { name: 'Save appearance' }).click();
+    await page.getByRole('status').filter({ hasText: 'Appearance saved.' }).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-theme'), 'light');
+    assert.equal(await page.locator('body').evaluate(body => getComputedStyle(body).backgroundColor), 'rgb(245, 246, 241)');
+    await audit('Light appearance at 1440 px');
+    await page.goto(workspace, { waitUntil: 'domcontentloaded' });
+    assert.equal(await page.locator('body').getAttribute('data-theme'), 'light');
+    await audit('Light workspace at 1440 px');
+    const freshContext = await browser.newContext({ serviceWorkers: 'block' });
+    try {
+      await freshContext.route('**/*', route => addresses.includes(new URL(route.request().url()).origin)
+        ? route.continue() : route.abort());
+      const freshPage = await freshContext.newPage();
+      await freshPage.goto(origin, { waitUntil: 'domcontentloaded' });
+      await signIn(freshPage);
+      assert.equal(await freshPage.locator('body').getAttribute('data-theme'), 'light');
+    } finally {
+      await freshContext.close();
+    }
+    await page.goto(origin + '/preferences', { waitUntil: 'domcontentloaded' });
+    await page.emulateMedia({ colorScheme: 'light' });
+    await theme.selectOption('system');
+    await page.getByRole('button', { name: 'Save appearance' }).click();
+    await page.getByRole('status').filter({ hasText: 'Appearance saved.' }).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-theme'), 'system');
+    assert.equal(await page.locator('body').evaluate(body => getComputedStyle(body).backgroundColor), 'rgb(245, 246, 241)');
+    await page.emulateMedia({ colorScheme: 'dark' });
+    assert.equal(await page.locator('body').evaluate(body => getComputedStyle(body).backgroundColor), 'rgb(17, 18, 19)');
+    await page.getByRole('button', { name: 'Use default appearance' }).click();
+    await page.getByRole('status').filter({ hasText: 'Default appearance restored.' }).waitFor();
+    assert.equal(await page.locator('body').getAttribute('data-theme'), 'dark');
+    console.log('Browser sign-in, keyboard skip link, workspace and project creation, reload, appearance, and responsive axe checks passed.');
   } finally {
     await browser.close();
   }

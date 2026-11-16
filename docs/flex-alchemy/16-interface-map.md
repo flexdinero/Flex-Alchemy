@@ -81,7 +81,7 @@ Routes below use W for the workspace path and P for the project path. Existing r
 | Data W/settings/data | Settings and export actions | Scoped exports, manifests, redaction, retention, deletion and restore status | Show partial records and recovery steps; confirm destructive effects and preserve permitted audit trail |
 | Audit W/settings/audit | Team or settings | Filter access, policy, grant and effect events; actor, target, time and outcome | Retain immutable history; apply explicit scope on export |
 | Help W/help and /help | Global navigation, sign-in and errors | Search help, plain-language glossary, accessible support handoff and case status | Preserve unsent support text; user confirms sharing context |
-| Preferences /preferences | Account menu | Theme, motion, notification preferences and session actions | Preserve settings across sessions; honor platform motion preferences |
+| Preferences /preferences | Account menu | Save Dark, Light or Match system and restore the account default. Motion and notification preferences remain separate | Persist theme across sessions; isolate preferences by account; follow the operating system in Match system mode |
 
 ## Interaction and API contract
 

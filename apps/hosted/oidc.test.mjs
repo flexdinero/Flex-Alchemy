@@ -65,7 +65,7 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
   }
   try {
     for (const name of ['001_workspace_boundary.sql', '002_actor_identity.sql', '003_sessions.sql',
-      '004_login_attempts.sql', '031_login_return_path.sql']) {
+      '004_login_attempts.sql', '031_login_return_path.sql', '042_account_appearance.sql']) {
       await db.exec(await readFile(new URL('../../db/migrations/' + name, import.meta.url), 'utf8'));
     }
     const attempt = await begin();

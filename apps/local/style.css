@@ -44,11 +44,37 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   --ink: #eee;
   --muted: #a2a5a6;
   --accent: #c8f76e;
+  --brand-muted: #b1b3b3;
+  --identity-tile: #252829;
+  --active-background: #20231a;
+  --active-border: #383e2e;
+  --control-border: #444647;
   display: grid;
   grid-template-columns: 238px minmax(0, 1fr);
   min-height: 100vh;
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
   font-size: .875rem;
+}
+.alchemy-workspace[data-theme="light"] {
+  color-scheme: light;
+}
+.alchemy-workspace[data-theme="system"] {
+  color-scheme: light dark;
+}
+@supports (color: light-dark(white, black)) {
+  .alchemy-workspace[data-theme] {
+    --base: light-dark(#f5f6f1, #111213);
+    --surface: light-dark(#fff, #18191a);
+    --line: light-dark(#babfb4, #2c2d2e);
+    --ink: light-dark(#20251e, #eee);
+    --muted: light-dark(#535c50, #a2a5a6);
+    --accent: light-dark(#3d6110, #c8f76e);
+    --brand-muted: light-dark(#586255, #b1b3b3);
+    --identity-tile: light-dark(#e3e8dc, #252829);
+    --active-background: light-dark(#e8efdd, #20231a);
+    --active-border: light-dark(#a8b397, #383e2e);
+    --control-border: light-dark(#747e70, #444647);
+  }
 }
 .alchemy-workspace .workspace-sidebar {
   position: sticky;
@@ -64,10 +90,10 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   gap: 10px;
 }
 .workspace-brand { text-decoration: none; font-size: 1.25rem; font-weight: 700; margin: 0 9px 30px; }
-.workspace-brand > span:last-child > span { font-weight: 450; color: #b1b3b3; }
-.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--accent); color: #151913; }
+.workspace-brand > span:last-child > span { font-weight: 450; color: var(--brand-muted); }
+.brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #c8f76e; color: #151913; }
 .workspace-identity { border: 1px solid var(--line); border-radius: 9px; padding: 12px 9px; margin-bottom: 40px; }
-.workspace-identity > span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; background: #252829; font-size: .75rem; }
+.workspace-identity > span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; background: var(--identity-tile); font-size: .75rem; }
 .workspace-identity small { display: block; color: var(--muted); }
 .workspace-identity > div { min-width: 0; overflow-wrap: anywhere; }
 .workspace-identity > span { flex-shrink: 0; }
@@ -77,7 +103,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .workspace-sidebar nav a { min-height: 43px; padding: 0 12px; text-decoration: none; border: 1px solid transparent; border-radius: 7px; color: var(--muted); }
 .workspace-sidebar nav a span { width: 20px; font-size: 1.25rem; line-height: 1; }
 .workspace-sidebar nav a:hover { color: var(--ink); background: var(--surface); }
-.workspace-sidebar nav a[aria-current] { color: var(--accent); background: #20231a; border-color: #383e2e; }
+.workspace-sidebar nav a[aria-current] { color: var(--accent); background: var(--active-background); border-color: var(--active-border); }
 .alchemy-workspace .workspace-topbar {
   min-height: 72px;
   padding: 0 clamp(18px, 3vw, 36px);
@@ -101,11 +127,11 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .alchemy-workspace input:not([type="hidden"]), .alchemy-workspace textarea, .alchemy-workspace select {
   background: var(--base);
   color: var(--ink);
-  border: 1px solid #444647;
+  border: 1px solid var(--control-border);
   border-radius: 7px;
 }
 .alchemy-workspace select { max-width: 100%; font: inherit; min-height: 2.75rem; padding: .5rem; }
-.alchemy-workspace button { background: var(--accent); color: #151913; border-color: transparent; border-radius: 7px; }
+.alchemy-workspace button { background: #c8f76e; color: #151913; border-color: transparent; border-radius: 7px; }
 .alchemy-workspace button:hover { background: #d9ff97; }
 .alchemy-workspace :focus-visible { outline-color: var(--accent); }
 .alchemy-workspace .status { color: var(--accent); }
