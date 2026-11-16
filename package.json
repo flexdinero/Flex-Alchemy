@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "openid-client": "6.8.1",
-    "pg": "8.16.3"
+    "pg": "8.16.3",
+    "tar-stream": "3.2.2"
   }
 }

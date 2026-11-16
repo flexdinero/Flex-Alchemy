@@ -8,6 +8,7 @@ import { request as httpRequest } from 'node:http';
 import { hostedHttpServer } from './http.mjs';
 import { PGlite } from '@electric-sql/pglite';
 import { hostedApi } from './api.mjs';
+import { inventoryArchive } from './archive-verification.mjs';
 import { sessionStore } from '../../db/session-store.mjs';
 
 test('hosted intake derives identity from a real expiring database session', async () => {
@@ -24,8 +25,9 @@ test('hosted intake derives identity from a real expiring database session', asy
   const githubBlob = createHash('sha1').update('blob ' + githubFile.length + '\0').update(githubFile).digest('hex');
   let alterGitHubBlob = false;
   let invalidArchiveRedirect = false;
-  function archiveFor(commit) {
-    const tar = Buffer.alloc(2048);
+  const archivedText = 'Pinned README\n';
+  function archiveFor(commit, filename = 'source/README') {
+    const tar = Buffer.alloc(3072);
     const metadata = '52 comment=' + commit + '\n';
     tar.write('pax_global_header');
     tar.write(metadata.length.toString(8).padStart(11, '0'), 124);
@@ -35,9 +37,19 @@ test('hosted intake derives identity from a real expiring database session', asy
     const checksum = tar.subarray(0, 512).reduce((sum, byte) => sum + byte, 0);
     tar.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148);
     tar.write(metadata, 512);
+    const file = tar.subarray(1024, 1536);
+    file.write(filename);
+    file.write(Buffer.byteLength(archivedText).toString(8).padStart(11, '0'), 124);
+    file.fill(32, 148, 156);
+    file.write('0', 156);
+    file.write('ustar', 257);
+    const fileChecksum = file.reduce((sum, byte) => sum + byte, 0);
+    file.write(fileChecksum.toString(8).padStart(6, '0') + '\0 ', 148);
+    tar.write(archivedText, 1536);
     return gzipSync(tar);
   }
   const githubArchive = archiveFor(githubCommit);
+  assert.deepEqual(await inventoryArchive(archiveFor(githubCommit, '../outside'), githubCommit), { status: 'invalid-archive' });
   let archiveResponse = githubArchive;
   const archiveLocation = 'https://codeload.github.com/octocat/Hello-World/legacy.tar.gz/' + githubCommit;
   const handle = hostedApi({ pool, publicOrigin, async githubRequest(url, options) {
@@ -328,6 +340,14 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal(downloadedArchive.status, 200);
       assert.equal(downloadedArchive.headers['content-type'], 'application/gzip');
       assert.deepEqual(downloadedArchive.bytes, githubArchive);
+      const inventoryPath = previewPath + '&archive=inventory';
+      const inventory = await visit(inventoryPath, viewerHeaders);
+      assert.equal(inventory.status, 200);
+      const payload = JSON.parse(inventory.body);
+      assert.equal(payload.commit, githubCommit);
+      assert.deepEqual(payload.entries, [{ path: 'source/README', type: 'file', size: Buffer.byteLength(archivedText),
+        sha256: createHash('sha256').update(archivedText).digest('hex') }]);
+      assert.equal((await visit(inventoryPath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal((await visit(archiveDownload, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal(githubCalls, callsAfterImport);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);

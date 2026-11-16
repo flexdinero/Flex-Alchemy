@@ -1,6 +1,8 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
+import { createHash } from 'node:crypto';
+import tar from 'tar-stream';
 
 const expandedLimit = 64 * 1024 * 1024;
 const block = 512;
@@ -60,4 +62,50 @@ export async function verifyArchiveEnvelope(bytes, expectedCommit) {
   }
   if (size < block * 4 || size % block !== 0 || tail.some(byte => byte !== 0)) return 'invalid-archive';
   return pinnedCommit(prefix) === expectedCommit ? 'verified' : 'wrong-revision';
+}
+
+export async function inventoryArchive(bytes, expectedCommit) {
+  const status = await verifyArchiveEnvelope(bytes, expectedCommit);
+  if (status !== 'verified') return { status };
+  const entries = [];
+  const names = new Set();
+  const extractor = tar.extract();
+  let failure = null;
+  let size = 0;
+  extractor.on('entry', (header, contents, next) => {
+    const path = header.name.replace(/\/$/, '');
+    if (!failure && (entries.length >= 10_000 || path.length > 2048)) failure = 'too-large';
+    if (!failure && (!path || /[\\:\u0000-\u001f\u007f]/.test(path) ||
+      path.split('/').some(part => !part || part === '.' || part === '..') || names.has(path))) {
+      failure = 'invalid-archive';
+    }
+    if (failure) {
+      contents.once('end', () => next());
+      contents.resume();
+      return;
+    }
+    names.add(path);
+    const hash = header.type === 'file' ? createHash('sha256') : null;
+    if (hash) contents.on('data', chunk => hash.update(chunk));
+    contents.once('end', () => {
+      entries.push({ path, type: header.type, size: header.size, ...(hash ? { sha256: hash.digest('hex') } : {}) });
+      next();
+    });
+    contents.resume();
+  });
+  try {
+    await pipeline(Readable.from([bytes]), createGunzip(), async function* (chunks) {
+      for await (const chunk of chunks) {
+        size += chunk.length;
+        if (size > expandedLimit) {
+          failure = 'too-large';
+          throw new Error('Archive expanded size limit exceeded');
+        }
+        yield chunk;
+      }
+    }, extractor);
+    return failure ? { status: failure } : { status: 'verified', entries, expandedSize: size };
+  } catch {
+    return { status: failure ?? 'invalid-archive' };
+  }
 }
