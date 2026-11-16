@@ -154,6 +154,11 @@ export function hostedApi({ pool, publicOrigin, browserFlow }) {
     let navigationProject = null;
     let signedIn = false;
     const page = (content, status) => homePage(content, status, url.pathname, navigationWorkspace, navigationProject, signedIn);
+    const signInPath = '/auth/sign-in?' + new URLSearchParams({ return: url.pathname + url.search });
+    const signedOut = () => new Response(null, {
+      status: 303, headers: { Location: browserFlow && request.method === 'GET' ? signInPath : '/',
+        'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
+    });
     if (url.origin !== publicOrigin) return reply(400, { error: 'Invalid host' });
     if (request.method === 'POST' && request.headers.get('origin') !== publicOrigin) {
       return reply(403, { error: 'Request origin denied' });
@@ -188,7 +193,7 @@ export function hostedApi({ pool, publicOrigin, browserFlow }) {
       }
       if (request.method === 'GET' && url.pathname === '/account') {
         if (!actor) return page(`<h2>Sign in to view your account</h2>
-${browserFlow ? '<p><a href="/auth/sign-in">Sign in</a></p>' : '<p>Sign-in is currently unavailable.</p>'}
+${browserFlow ? `<p><a href="${escapeHtml(signInPath)}">Sign in</a></p>` : '<p>Sign-in is currently unavailable.</p>'}
 <p><a href="/access-help">Get access help</a></p>`, 401);
         const entries = await workspaces.listWorkspaces(actor);
         return page(`<h2>Your account</h2><dl><dt>Flex Alchemy account ID</dt><dd><code>${escapeHtml(actor)}</code></dd></dl>
@@ -218,7 +223,7 @@ ${browserFlow ? '<p><a href="/auth/sign-in">Try signing in again</a></p>' : ''}`
       }
       const workspaceMatch = workspaceRoute.exec(url.pathname);
       if (['GET', 'POST'].includes(request.method) && workspaceMatch) {
-        if (!actor) return new Response(null, { status: 303, headers: { Location: '/', 'Cache-Control': 'no-store' } });
+        if (!actor) return signedOut();
         if (workspaceMatch[2] === '/export') {
           if (request.method !== 'GET') return reply(405, { error: 'Use GET to download a workspace' }, { Allow: 'GET' });
           const bundle = await workspaces.exportProjects(actor, workspaceMatch[1]);
@@ -479,7 +484,7 @@ ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
       }
       const reviewPage = reviewRoute.exec(url.pathname);
       if (['GET', 'POST'].includes(request.method) && reviewPage) {
-        if (!actor) return new Response(null, { status: 303, headers: { Location: '/', 'Cache-Control': 'no-store' } });
+        if (!actor) return signedOut();
         const [, workspaceId, projectId, missionId, action] = reviewPage;
         if (action && !['/verification', '/revise', '/plan'].includes(action) && request.method !== 'GET') {
           return reply(405, { error: 'Use GET for this resource' }, { Allow: 'GET' });
@@ -830,7 +835,7 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
       }
       const projectPage = projectRoute.exec(url.pathname);
       if (['GET', 'POST'].includes(request.method) && projectPage) {
-        if (!actor) return new Response(null, { status: 303, headers: { Location: '/', 'Cache-Control': 'no-store' } });
+        if (!actor) return signedOut();
         const [, workspaceId, projectId, action] = projectPage;
         if (action === '/export') {
           if (request.method !== 'GET') return reply(405, { error: 'Use GET to download a project' }, { Allow: 'GET' });

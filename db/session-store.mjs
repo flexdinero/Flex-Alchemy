@@ -25,12 +25,12 @@ export function sessionStore(pool) {
     cleanupExpired() {
       return identityQuery(client => client.query('SELECT alchemy.cleanup_expired_identity_records()'));
     },
-    beginLogin({ state, nonce, verifier }) {
+    beginLogin({ state, nonce, verifier, returnPath = '/' }) {
       const handle = randomBytes(32).toString('base64url');
       return identityQuery(async client => {
-        await client.query(`INSERT INTO alchemy.login_attempts
-          VALUES ($1, $2, $3, $4, statement_timestamp() + interval '10 minutes')`,
-        [digest(handle), state, nonce, verifier]);
+        await client.query(`INSERT INTO alchemy.login_attempts (handle_digest, state, nonce, verifier, expires_at, return_path)
+          VALUES ($1, $2, $3, $4, statement_timestamp() + interval '10 minutes', $5)`,
+        [digest(handle), state, nonce, verifier, returnPath]);
         return handle;
       });
     },

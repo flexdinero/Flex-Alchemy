@@ -46,10 +46,11 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
     ), privateKey).toString('base64url');
     return Response.json({ access_token: 'fixture-access-token', token_type: 'Bearer', id_token: unsigned + '.' + signature });
   };
-  async function begin() {
-    const response = await handle(new Request(publicOrigin + '/auth/sign-in'));
+  async function begin(path = '/auth/sign-in') {
+    const response = await handle(new Request(new URL(path, publicOrigin)));
     assert.equal(response.status, 303);
     const location = new URL(response.headers.get('location'));
+    assert.equal(location.searchParams.has('return'), false);
     assert.equal(location.searchParams.get('code_challenge_method'), 'S256');
     challenge = location.searchParams.get('code_challenge');
     nonce = location.searchParams.get('nonce');
@@ -61,7 +62,8 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
     }));
   }
   try {
-    for (const name of ['001_workspace_boundary.sql', '002_actor_identity.sql', '003_sessions.sql', '004_login_attempts.sql']) {
+    for (const name of ['001_workspace_boundary.sql', '002_actor_identity.sql', '003_sessions.sql',
+      '004_login_attempts.sql', '031_login_return_path.sql']) {
       await db.exec(await readFile(new URL('../../db/migrations/' + name, import.meta.url), 'utf8'));
     }
     const attempt = await begin();
@@ -97,6 +99,19 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
     assert.equal(exchanges, 2);
     assert.equal((await callback(await begin(), undefined, 'bad-signature')).status, 400);
     assert.equal(exchanges, 3);
+    const deepLink = '/workspaces/00000000-0000-4000-8000-000000000001/knowledge?q=testing';
+    const redirect = await handle(new Request(publicOrigin + deepLink));
+    assert.equal(redirect.status, 303);
+    const comeback = await callback(await begin(redirect.headers.get('location')));
+    assert.equal(comeback.headers.get('location'), deepLink);
+    const denied = await handle(new Request(publicOrigin + deepLink, {
+      headers: { Cookie: comeback.headers.getSetCookie()[0].split(';')[0] },
+    }));
+    assert.equal(denied.status, 404);
+    for (const returnPath of ['//evil.example', '//', '/\\evil.example', '/workspaces/../auth/sign-out', 'https://evil.example']) {
+      const externalAttempt = await begin('/auth/sign-in?' + new URLSearchParams({ return: returnPath }));
+      assert.equal((await callback(externalAttempt)).headers.get('location'), '/');
+    }
   } finally {
     await db.close();
   }

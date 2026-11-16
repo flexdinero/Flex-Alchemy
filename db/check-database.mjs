@@ -64,6 +64,7 @@ export async function checkDatabase(pool) {
       AND has_function_privilege(current_user, 'alchemy.cleanup_expired_identity_records()', 'EXECUTE')
       AND has_table_privilege(current_user, 'alchemy.sessions', 'INSERT')
       AND has_table_privilege(current_user, 'alchemy.login_attempts', 'INSERT')
+      AND has_column_privilege(current_user, 'alchemy.login_attempts', 'return_path', 'INSERT')
       AND NOT has_table_privilege(current_user, 'alchemy.sessions', 'SELECT') AS ready`);
     if (!identity.ready) throw new Error('Identity schema or runtime role is incomplete');
     await client.query('SELECT alchemy.session_actor($1)', ['0'.repeat(64)]);

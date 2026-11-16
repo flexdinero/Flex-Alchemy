@@ -22,6 +22,8 @@ Open **Find sources for this mission** to look up candidate references using the
 
 Create the browser flow with `discoverBrowserFlow` and pass it to `hostedApi`. Register the HTTPS public origin plus `/auth/callback` with the OIDC provider. Send the browser to `/auth/sign-in`. The callback consumes a ten-minute, browser-bound login attempt and verifies state, PKCE, nonce and the signed ID token before opening the eight-hour session. The database stores session token digests. The API resolves the actor from the session and checks the origin of writes.
 
+With migration 031, an expired session on a workspace link sends the user through sign-in and returns them to the requested page. The destination stays with the login attempt, and workspace permissions are checked again on arrival.
+
 Run `npm ci --ignore-scripts` and `npm run start:hosted` after configuring these environment variables:
 
 | Variable | Value |

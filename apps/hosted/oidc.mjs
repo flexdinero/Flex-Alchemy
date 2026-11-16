@@ -4,6 +4,16 @@ const loginCookie = '__Host-alchemy_login';
 const sessionCookie = '__Host-alchemy_session';
 const attributes = '; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=';
 const cookie = (name, value, age) => name + '=' + value + attributes + age;
+
+function returnDestination(path, origin) {
+  if (!path || path.length > 2048 || !path.startsWith('/') || path.startsWith('//') || /[\\\u0000-\u0020\u007f]/.test(path)) return '/';
+  const destination = new URL(path, origin);
+  if (destination.origin !== origin) return '/';
+  if (destination.pathname === '/account' || destination.pathname.startsWith('/workspaces/')) {
+    return destination.pathname + destination.search;
+  }
+  return '/';
+}
 const failure = () => new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign-in unavailable | Flex Alchemy</title><link rel="stylesheet" href="/style.css"></head>
@@ -36,7 +46,9 @@ export function oidcBrowserFlow({ config, sessions, publicOrigin }) {
         redirect_uri: redirectUri, scope: 'openid', state, nonce,
         code_challenge: await oidc.calculatePKCECodeChallenge(verifier), code_challenge_method: 'S256',
       });
-      const handle = await sessions.beginLogin({ state, nonce, verifier });
+      const returnPath = url.searchParams.getAll('return').length === 1
+        ? returnDestination(url.searchParams.get('return'), publicOrigin) : '/';
+      const handle = await sessions.beginLogin({ state, nonce, verifier, returnPath });
       return new Response(null, { status: 303, headers: {
         Location: location.href, 'Set-Cookie': cookie(loginCookie, handle, 600),
         'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
@@ -56,7 +68,8 @@ export function oidcBrowserFlow({ config, sessions, publicOrigin }) {
       const claims = tokens.claims();
       if (!claims?.iss || !claims.sub) return failure();
       const token = await sessions.issue({ issuer: claims.iss, subject: claims.sub });
-      const headers = new Headers({ Location: '/', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+      const headers = new Headers({ Location: returnDestination(attempt.return_path, publicOrigin),
+        'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
       headers.append('Set-Cookie', cookie(sessionCookie, token, 28_800));
       headers.append('Set-Cookie', cookie(loginCookie, '', 0));
       return new Response(null, { status: 303, headers });
