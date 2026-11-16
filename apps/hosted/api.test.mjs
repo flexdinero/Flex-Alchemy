@@ -26,6 +26,8 @@ test('hosted intake derives identity from a real expiring database session', asy
   let alterGitHubBlob = false;
   let invalidArchiveRedirect = false;
   const archivedText = 'Pinned README\n';
+  const archivedBlob = createHash('sha1').update('blob ' + Buffer.byteLength(archivedText) + '\0').update(archivedText).digest('hex');
+  let divergentArchiveTree = false;
   function archiveFor(commit, filename = 'source/README') {
     const tar = Buffer.alloc(3072);
     const metadata = '52 comment=' + commit + '\n';
@@ -61,6 +63,11 @@ test('hosted intake derives identity from a real expiring database session', asy
     assert.equal(options.redirect, 'error');
     if (url === archiveLocation) return new Response(archiveResponse);
     const base = 'https://api.github.com/repos/octocat/hello-world/git/';
+    if (url === base + 'trees/' + githubTree + '?recursive=1') {
+      return Response.json({ sha: githubTree, truncated: false, tree: [
+        { path: 'README', type: 'blob', mode: '100644', sha: divergentArchiveTree ? 'f'.repeat(40) : archivedBlob },
+      ] });
+    }
     if (url === base + 'trees/' + githubTree) {
       return Response.json({ sha: githubTree, tree: [{ path: 'src', type: 'tree', sha: githubNestedTree }] });
     }
@@ -346,10 +353,20 @@ test('hosted intake derives identity from a real expiring database session', asy
       const payload = JSON.parse(inventory.body);
       assert.equal(payload.commit, githubCommit);
       assert.deepEqual(payload.entries, [{ path: 'source/README', type: 'file', size: Buffer.byteLength(archivedText),
-        sha256: createHash('sha256').update(archivedText).digest('hex') }]);
+        sha256: createHash('sha256').update(archivedText).digest('hex'), gitBlobSha: archivedBlob }]);
       assert.equal((await visit(inventoryPath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal((await visit(archiveDownload, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal(githubCalls, callsAfterImport);
+      const comparePath = previewPath + '&archive=compare';
+      assert.equal((await visit(comparePath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
+      const comparison = JSON.parse((await visit(comparePath, viewerHeaders)).body);
+      assert.equal(comparison.result, 'match');
+      assert.equal(comparison.matched, 1);
+      assert.equal(comparison.tree, githubTree);
+      divergentArchiveTree = true;
+      const mismatch = JSON.parse((await visit(comparePath, viewerHeaders)).body);
+      assert.equal(mismatch.result, 'differences');
+      assert.deepEqual(mismatch.mismatched, [{ path: 'README', expectedGitBlobSha: 'f'.repeat(40), archiveGitBlobSha: archivedBlob }]);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);

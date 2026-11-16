@@ -86,9 +86,14 @@ export async function inventoryArchive(bytes, expectedCommit) {
     }
     names.add(path);
     const hash = header.type === 'file' ? createHash('sha256') : null;
-    if (hash) contents.on('data', chunk => hash.update(chunk));
+    const blob = hash ? createHash('sha1').update('blob ' + header.size + '\0') : null;
+    if (hash) contents.on('data', chunk => {
+      hash.update(chunk);
+      blob.update(chunk);
+    });
     contents.once('end', () => {
-      entries.push({ path, type: header.type, size: header.size, ...(hash ? { sha256: hash.digest('hex') } : {}) });
+      entries.push({ path, type: header.type, size: header.size,
+        ...(hash ? { sha256: hash.digest('hex'), gitBlobSha: blob.digest('hex') } : {}) });
       next();
     });
     contents.resume();

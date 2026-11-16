@@ -16,6 +16,8 @@ New imports stream through gzip integrity verification, enforce a 64 MiB expande
 
 **Download file inventory (JSON)** reads the stored archive in memory and reports entry paths, types, sizes, and SHA-256 digests for regular files. The inventory includes the pinned commit and stored archive digest, rejects duplicate or unsafe paths, and is limited to 10,000 entries.
 
+**Compare with GitHub tree (JSON)** compares regular archive files with the pinned GitHub tree using their Git blob IDs. It lists changed, extra, and omitted paths and reports an unavailable result when the provider cannot return the complete tree. Git archive export attributes can intentionally change or omit files. The report covers regular file contents only.
+
 With migration 029 applied, **Sign out of other Flex Alchemy sessions** revokes the account's other app sessions and keeps the current browser signed in. Provider-managed sessions are controlled through the identity provider.
 
 Workspace members can open **Recent activity** for the latest 50 recorded mission creations and review decisions. Each entry links to its mission. Earlier missions without a recorded creation timestamp still show their recorded reviews.

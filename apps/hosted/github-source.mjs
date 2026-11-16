@@ -13,8 +13,9 @@ export function parseGitHubSource(repository, revision) {
   return { owner: match[1].toLowerCase(), repository: match[2].toLowerCase(), commit };
 }
 
-async function readGitHubObject({ owner, repository }, kind, sha, request, signal, byteLimit) {
-  const endpoint = 'https://api.github.com/repos/' + owner + '/' + repository + '/git/' + kind + '/' + sha;
+async function readGitHubObject({ owner, repository }, kind, sha, request, signal, byteLimit, recursive = false) {
+  const endpoint = 'https://api.github.com/repos/' + owner + '/' + repository + '/git/' + kind + '/' + sha
+    + (recursive ? '?recursive=1' : '');
   try {
     const response = await request(endpoint, {
       redirect: 'error', signal,
@@ -37,6 +38,38 @@ async function readGitHubObject({ owner, repository }, kind, sha, request, signa
   } catch {
     return { status: 'unavailable' };
   }
+}
+
+export async function compareGitHubArchiveFiles(source, tree, entries, request = fetch) {
+  const result = await readGitHubObject(source, 'trees', tree, request, AbortSignal.timeout(8000), 2_097_152, true);
+  if (result.status !== 'verified') return { status: result.status };
+  if (result.data.truncated === true || result.data.tree?.length > 10_000) return { status: 'too-large' };
+  if (result.data.truncated !== false || !Array.isArray(result.data.tree)) return { status: 'unavailable' };
+  const expected = new Map();
+  const seen = new Set();
+  for (const entry of result.data.tree) {
+    if (!entry || typeof entry.path !== 'string' || !entry.path || seen.has(entry.path) ||
+      !['blob', 'tree', 'commit'].includes(entry.type) || !fullSha.test(entry.sha ?? '') ||
+      (entry.type === 'blob' && !['100644', '100755', '120000'].includes(entry.mode))) return { status: 'unavailable' };
+    seen.add(entry.path);
+    if (!isRegularGitHubFile(entry)) continue;
+    expected.set(entry.path, entry.sha);
+  }
+  const files = entries.filter(entry => entry.type === 'file');
+  const prefix = files[0]?.path.split('/')[0];
+  const mismatched = [];
+  const extra = [];
+  let matched = 0;
+  for (const file of files) {
+    if (!file.path.startsWith(prefix + '/')) return { status: 'invalid-archive' };
+    const path = file.path.slice(prefix.length + 1);
+    const hash = expected.get(path);
+    if (!hash) extra.push(path);
+    else if (hash === file.gitBlobSha) matched++;
+    else mismatched.push({ path, expectedGitBlobSha: hash, archiveGitBlobSha: file.gitBlobSha });
+    expected.delete(path);
+  }
+  return { status: 'compared', matched, mismatched, extra, missing: [...expected.keys()] };
 }
 
 export async function verifyGitHubSource(source, request = fetch) {

@@ -4,7 +4,7 @@ import { sessionStore } from '../../db/session-store.mjs';
 import { readFile } from 'node:fs/promises';
 import { retrieve } from '../../docs/flex-alchemy/knowledge/retrieve.mjs';
 import { randomUUID } from 'node:crypto';
-import { inspectGitHubDirectory, isRegularGitHubFile, parseGitHubSource, readGitHubArchive, readGitHubTextFile, verifyGitHubSource } from './github-source.mjs';
+import { compareGitHubArchiveFiles, inspectGitHubDirectory, isRegularGitHubFile, parseGitHubSource, readGitHubArchive, readGitHubTextFile, verifyGitHubSource } from './github-source.mjs';
 import { inventoryArchive } from './archive-verification.mjs';
 
 const style = await readFile(new URL('../local/style.css', import.meta.url), 'utf8');
@@ -926,7 +926,7 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
             const canonicalName = source.owner + '/' + source.repository;
             if (url.searchParams.has('archive')) {
               const action = url.searchParams.get('archive');
-              if (!['view', 'download', 'inventory'].includes(action) || file !== null || directory || (action !== 'view' && request.method !== 'GET')) {
+              if (!['view', 'download', 'inventory', 'compare'].includes(action) || file !== null || directory || (action !== 'view' && request.method !== 'GET')) {
                 return page(back + '<h2>Invalid repository archive address</h2>', 400);
               }
               if (request.method === 'POST' && !writable) {
@@ -937,12 +937,31 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
               const archiveUrl = repositoryPreview(url.pathname, canonicalName, source.commit);
               const returnUrl = archiveUrl + '&archive=view';
               const saved = await workspaces.projectSourceArchive(actor, workspaceId, projectId, source, action !== 'view');
-              if (action === 'inventory') {
+              if (action === 'inventory' || action === 'compare') {
                 if (!saved) return page(back + '<h2>Repository archive unavailable</h2>', 404);
                 const inventory = await inventoryArchive(saved.content, source.commit);
                 if (inventory.status !== 'verified') {
                   return page(`<a href="${escapeHtml(returnUrl)}">Back to archive</a><h2>Archive inventory unavailable</h2>
 <p>${inventory.status === 'too-large' ? 'The archive exceeds the inventory limits.' : 'The archive could not be read as a valid source inventory.'}</p>`, 422);
+                }
+                if (action === 'compare') {
+                  const comparison = await compareGitHubArchiveFiles(source, revision.tree_sha, inventory.entries, githubRequest);
+                  if (comparison.status !== 'compared') {
+                    const errors = {
+                      missing: [404, 'GitHub could not find the recorded tree.'],
+                      'too-large': [422, 'The recorded tree exceeds the comparison limit.'],
+                      'invalid-archive': [422, 'The archive does not have a single source root.'],
+                      unavailable: [503, 'GitHub could not provide a complete tree. Try again shortly.'],
+                    };
+                    const [status, message] = errors[comparison.status];
+                    return page(`<a href="${escapeHtml(returnUrl)}">Back to archive</a><h2>Archive comparison unavailable</h2><p>${message}</p>`, status);
+                  }
+                  const { matched, mismatched, missing, extra } = comparison;
+                  return reply(200, { schemaVersion: 1, repository: canonicalName, commit: source.commit,
+                    tree: revision.tree_sha, archiveSha256: saved.archive_sha256, scope: 'regular files',
+                    result: mismatched.length || missing.length || extra.length ? 'differences' : 'match',
+                    matched, mismatched, missing, extra },
+                  { 'Content-Disposition': `attachment; filename="source-${source.commit}-comparison.json"` });
                 }
                 return reply(200, { schemaVersion: 1, repository: canonicalName, commit: source.commit, archiveSha256: saved.archive_sha256,
                   expandedBytes: inventory.expandedSize, entries: inventory.entries },
@@ -982,7 +1001,8 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
               return page(back + `<h2>Repository archive</h2><p>${escapeHtml(canonicalName)} · <code>${source.commit}</code></p>
 ${saved ? `<p>Imported ${saved.size} bytes on ${new Date(saved.recorded_at).toISOString()} by <code>${saved.recorded_by}</code>.</p>
 <p>SHA-256 <code>${saved.archive_sha256}</code></p><p><a href="${escapeHtml(archiveUrl + '&archive=download')}">Download saved archive</a>
-· <a href="${escapeHtml(archiveUrl + '&archive=inventory')}">Download file inventory (JSON)</a></p>`
+· <a href="${escapeHtml(archiveUrl + '&archive=inventory')}">Download file inventory (JSON)</a>
+· <a href="${escapeHtml(archiveUrl + '&archive=compare')}">Compare with GitHub tree (JSON)</a></p>`
   : `<p>No archive is saved for this revision.</p>${writable ? '<p>Import the GitHub source archive for this commit, up to 8 MiB compressed and 64 MiB expanded.</p><form method="post"><button name="confirm" value="import">Import repository archive</button></form>' : ''}`}`);
             }
             if (request.method === 'POST' && (!file || !writable)) {
