@@ -64,6 +64,50 @@ export function workspaceStore(pool) {
   }
 
   return {
+    releaseActivationOptions(actorId, workspaceId, projectId, candidateId) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT d.environment, active.id AS previous_id, active.candidate_id AS current_candidate_id,
+          EXISTS (SELECT 1 FROM alchemy.release_environment_activations h WHERE
+            h.workspace_id=d.workspace_id AND h.project_id=d.project_id AND h.environment=d.environment
+            AND h.candidate_id=d.candidate_id) AS previously_active
+          FROM alchemy.release_environment_decisions d JOIN alchemy.release_approver_grants g ON g.id = d.grant_id
+          JOIN alchemy.workspace_team($1) team ON team.actor_id = d.reviewer_id AND team.revoked_at IS NULL
+          LEFT JOIN LATERAL (SELECT h.id,h.candidate_id FROM alchemy.release_environment_activations h WHERE
+            h.workspace_id=d.workspace_id AND h.project_id=d.project_id AND h.environment=d.environment
+            ORDER BY h.sequence DESC LIMIT 1) active ON true
+          WHERE d.workspace_id=$1 AND d.project_id=$2 AND d.candidate_id=$3 AND d.decision='approved'
+            AND d.expires_at > statement_timestamp() AND g.revoked_at IS NULL ORDER BY d.environment`,
+        [workspaceId, projectId, candidateId])
+      ).rows);
+    },
+    releaseEnvironmentHistory(actorId, workspaceId, projectId, environment) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT id, candidate_id, operation, activated_at, activated_by, reason
+          FROM alchemy.release_environment_activations WHERE workspace_id = $1 AND project_id = $2 AND environment = $3
+          ORDER BY sequence DESC LIMIT 50`, [workspaceId, projectId, environment])
+      ).rows);
+    },
+    activateReleaseEnvironment(actorId, workspaceId, projectId, environment, candidateId, previousId, operation, reason) {
+      return asActor(actorId, async client => {
+        const scope = [workspaceId.toLowerCase(), projectId.toLowerCase(), environment];
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+          ['release:' + scope.join(':')]);
+        const { rows: [current] } = await client.query(`SELECT id, candidate_id FROM alchemy.release_environment_activations
+          WHERE workspace_id = $1 AND project_id = $2 AND environment = $3 ORDER BY sequence DESC LIMIT 1`, scope);
+        if ((current?.id ?? null) !== (previousId?.toLowerCase() ?? null) || current?.candidate_id === candidateId.toLowerCase()) return false;
+        const { rows } = await client.query(`INSERT INTO alchemy.release_environment_activations
+          (workspace_id,project_id,environment,candidate_id,previous_id,operation,activated_by,reason)
+          SELECT d.workspace_id,d.project_id,d.environment,d.candidate_id,$5,$6,$7,$8
+          FROM alchemy.release_environment_decisions d JOIN alchemy.release_approver_grants g ON g.id = d.grant_id
+          JOIN alchemy.workspace_team($1) team ON team.actor_id = d.reviewer_id AND team.revoked_at IS NULL
+          WHERE d.workspace_id = $1 AND d.project_id = $2 AND d.environment = $3 AND d.candidate_id = $4
+            AND d.decision = 'approved' AND d.expires_at > statement_timestamp() AND g.revoked_at IS NULL
+            AND (($6 = 'rollback') = EXISTS (SELECT 1 FROM alchemy.release_environment_activations a
+              WHERE a.workspace_id = $1 AND a.project_id = $2 AND a.environment = $3 AND a.candidate_id = $4))
+          RETURNING id`, [...scope, candidateId, previousId, operation, actorId, reason]);
+        return rows.length > 0;
+      });
+    },
     releaseApproverGrants(actorId, workspaceId, projectId, reviewerId = null) {
       return asActor(actorId, async client => (
         await client.query(`SELECT id, environment, reviewer_id, granted_by, granted_at, revoked_by, revoked_at

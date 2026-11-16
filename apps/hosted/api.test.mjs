@@ -201,6 +201,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/036_archive_test_runs.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/037_archive_release_candidates.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/038_release_environment_decisions.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/039_release_environment_activations.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -403,16 +404,19 @@ test('hosted intake derives identity from a real expiring database session', asy
       const nextRun = (await visit(runsPath, reviewerForm)).body.match(/name="submission" value="([^"]+)"/)[1];
       assert.equal((await visit(runsPath, reviewerForm, 'submission=' + nextRun)).status, 303);
       const archiveDigest = createHash('sha256').update(githubArchive).digest('hex');
-      await db.exec('SET ROLE alchemy_run_client');
-      try {
-        const { rows: [claimed] } = await db.query('SELECT * FROM alchemy.claim_archive_test_run()');
-        assert.equal(claimed.id, nextRun);
-        const result = { status: 'finished', exitCode: 0, commit: githubCommit, archiveSha256: archiveDigest };
-        assert.equal((await db.query('SELECT alchemy.finish_archive_test_run($1,$2,$3) AS recorded',
-          [nextRun, claimed.lease_token, JSON.stringify(result)])).rows[0].recorded, true);
-      } finally {
-        await db.exec('RESET ROLE');
+      async function finishPassingRun(expectedId) {
+        await db.exec('SET ROLE alchemy_run_client');
+        try {
+          const { rows: [claimed] } = await db.query('SELECT * FROM alchemy.claim_archive_test_run()');
+          assert.equal(claimed.id, expectedId);
+          const result = { status: 'finished', exitCode: 0, commit: githubCommit, archiveSha256: archiveDigest };
+          assert.equal((await db.query('SELECT alchemy.finish_archive_test_run($1,$2,$3) AS recorded',
+            [expectedId, claimed.lease_token, JSON.stringify(result)])).rows[0].recorded, true);
+        } finally {
+          await db.exec('RESET ROLE');
+        }
       }
+      await finishPassingRun(nextRun);
       const candidateForm = releases + '?from=' + nextRun;
       assert.match((await visit(runsPath + '&run=' + nextRun, releaseOwner)).body, /Prepare release candidate/);
       assert.equal((await visit(candidateForm, reviewerForm)).status, 403);
@@ -444,6 +448,39 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.match((await visit(candidatePath, viewerHeaders)).body, /staging · approved/);
       assert.equal((await visit(approvers, releaseOwner, 'action=revoke&grant=' + scoped.production)).status, 303);
       assert.equal((await visit(candidatePath, reviewerForm, decide(scoped.production, 'production'))).status, 403);
+      const selectionPath = releases + '?environment=staging';
+      const select = (candidate, previous, operation) =>
+        new URLSearchParams({ candidate, previous, operation, reason: 'Select reviewed artifact' }).toString();
+      const firstCandidateId = candidatePath.split('=').at(-1);
+      assert.match((await visit(selectionPath, viewerHeaders)).body, /No release candidate has been selected/);
+      await db.query("UPDATE alchemy.release_environment_decisions SET expires_at = now() - interval '1 minute' WHERE candidate_id = $1 AND environment = 'staging'", [firstCandidateId]);
+      assert.equal((await visit(selectionPath, releaseOwner, select(firstCandidateId, '', 'promote'))).status, 409);
+      await db.query("UPDATE alchemy.release_environment_decisions SET expires_at = now() + interval '24 hours' WHERE candidate_id = $1 AND environment = 'staging'", [firstCandidateId]);
+      assert.match((await visit(candidatePath, releaseOwner)).body, /Select for release/);
+      assert.equal((await visit(selectionPath, reviewerForm, select(firstCandidateId, '', 'promote'))).status, 403);
+      assert.equal((await visit(selectionPath, releaseOwner, select(firstCandidateId, '', 'rollback'))).status, 409);
+      assert.equal((await visit(selectionPath, releaseOwner, select(firstCandidateId, '', 'promote'))).status, 303);
+      assert.equal((await visit(selectionPath, releaseOwner, select(firstCandidateId, '', 'promote'))).status, 409);
+      const secondRun = (await visit(runsPath, reviewerForm)).body.match(/name="submission" value="([^"]+)"/)[1];
+      assert.equal((await visit(runsPath, reviewerForm, 'submission=' + secondRun)).status, 303);
+      await finishPassingRun(secondRun);
+      const secondCandidate = await visit(releases + '?from=' + secondRun, releaseOwner, rationale);
+      const secondCandidateId = secondCandidate.headers.location.split('=').at(-1);
+      assert.equal((await visit(secondCandidate.headers.location, reviewerForm, decide(scoped.staging, 'staging'))).status, 303);
+      const firstSelection = (await visit(secondCandidate.headers.location, releaseOwner)).body.match(/name="previous" value="([^"]+)"/)[1];
+      assert.equal((await visit(selectionPath, releaseOwner, select(secondCandidateId, firstSelection, 'promote'))).status, 303);
+      const rollbackPage = await visit(candidatePath, releaseOwner);
+      assert.match(rollbackPage.body, /Select for rollback/);
+      const secondSelection = rollbackPage.body.match(/name="previous" value="([^"]+)"/)[1];
+      assert.equal((await visit(selectionPath, releaseOwner, select(firstCandidateId, secondSelection, 'rollback'))).status, 303);
+      const history = await visit(selectionPath, viewerHeaders);
+      assert.match(history.body, /Rollback selection/);
+      assert.ok(history.body.includes('candidate=' + firstCandidateId + '">Open currently selected candidate'));
+      assert.equal((await visit(releases + '?environment=production', releaseOwner, select(firstCandidateId, '', 'promote'))).status, 409);
+      assert.equal((await visit(approvers, releaseOwner, 'action=revoke&grant=' + scoped.staging)).status, 303);
+      assert.doesNotMatch((await visit(secondCandidate.headers.location, releaseOwner)).body, /Select for rollback/);
+      const { rows: [activeSelection] } = await db.query('SELECT id FROM alchemy.release_environment_activations ORDER BY sequence DESC LIMIT 1');
+      assert.equal((await visit(selectionPath, releaseOwner, select(secondCandidateId, activeSelection.id, 'rollback'))).status, 409);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);

@@ -16,6 +16,8 @@ After migration 037, workspace owners can use **Prepare release candidate** on a
 
 After migration 038, workspace owners use **Releases → Manage release approvers** to grant or revoke approval access for a project and environment. A reviewer with an active grant can approve or deny a candidate for that environment. The decision records the reviewer, grant, environment, exact archive digest, rationale, and time. Approval expires after 24 hours. A deployment adapter must verify the approval and its grant before acting.
 
+After migration 039, owners can select an approved candidate for an environment or select a previously active candidate for rollback. The form binds its request to the environment's current selection. The database records the operator, reason, prior selection, and candidate, and checks that the original reviewer remains a member with an unrevoked grant and an unexpired approval. The selection is a workspace release record. Provider deployment and runtime health are tracked separately.
+
 New imports stream through gzip integrity verification, enforce a 64 MiB expanded-size limit, and check the tar envelope and archived Git commit identifier before saving. These checks establish archive provenance and bounds. File-by-file extraction and execution require a separate worker.
 
 **Download file inventory (JSON)** reads the stored archive in memory and reports entry paths, types, sizes, and SHA-256 digests for regular files. The inventory includes the pinned commit and stored archive digest, rejects duplicate or unsafe paths, and is limited to 10,000 entries.

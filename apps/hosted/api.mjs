@@ -901,6 +901,42 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
           const back = `<a href="${releasePath}">Back to release candidates</a>`;
           const sourceLink = release => repositoryPreview(navigationProject.path + '/repository',
             release.owner_name + '/' + release.repository_name, release.commit_sha);
+          if (url.searchParams.has('environment')) {
+            const environment = url.searchParams.get('environment');
+            if (!releaseEnvironments.includes(environment)) return page(back + '<h2>Unknown release environment</h2>', 400);
+            const environmentPath = releasePath + '?environment=' + environment;
+            if (request.method === 'POST') {
+              if (project.role !== 'owner') return page(back + '<h2>Only workspace owners can select environment releases</h2>', 403);
+              if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+                return page(back + '<h2>Submit the environment selection form</h2>', 415);
+              }
+              const form = new URLSearchParams(await request.text());
+              const candidate = form.get('candidate');
+              const previous = form.get('previous');
+              const operation = form.get('operation');
+              const reason = form.get('reason')?.trim() ?? '';
+              const returnToCandidate = accountIdPattern.test(candidate ?? '')
+                ? `<a href="${releasePath}?candidate=${candidate}">Return to candidate</a>` : back;
+              if (form.size !== 4 || !accountIdPattern.test(candidate ?? '') ||
+                (previous !== '' && !accountIdPattern.test(previous ?? '')) ||
+                !['promote', 'rollback'].includes(operation) || !reason || reason.length > 1000) {
+                return page(returnToCandidate + '<h2>Invalid environment selection</h2>', 400);
+              }
+              if (!await workspaces.activateReleaseEnvironment(actor, workspaceId, projectId,
+                environment, candidate, previous || null, operation, reason)) {
+                return page(returnToCandidate + '<h2>Environment selection changed or approval is unavailable</h2><p>Reopen the candidate and check its approval before trying again.</p>', 409);
+              }
+              return new Response(null, { status: 303, headers: { Location: environmentPath, 'Cache-Control': 'no-store' } });
+            }
+            const history = await workspaces.releaseEnvironmentHistory(actor, workspaceId, projectId, environment);
+            const current = history[0];
+            const items = history.map(event => `<li><strong>${event.operation === 'rollback' ? 'Rollback selection' : 'Promotion selection'}</strong>
+· <a href="${releasePath}?candidate=${event.candidate_id}">Candidate</a> · ${new Date(event.activated_at).toISOString()}
+<p class="preserve">${escapeHtml(event.reason)}</p><p>Selected by <code>${event.activated_by}</code></p></li>`);
+            return page(back + `<h2>${environment} release selection</h2><p>This page records the selected release artifact. The deployment provider reports what is running.</p>
+${current ? `<p><a href="${releasePath}?candidate=${current.candidate_id}">Open currently selected candidate</a></p><h3>Selection history</h3><ol>${items.join('')}</ol>`
+  : '<p>No release candidate has been selected for this environment.</p>'}`);
+          }
           if (url.searchParams.get('approvers') === '1') {
             if (project.role !== 'owner') return page(back + '<h2>Only workspace owners can manage release approvers</h2>', 403);
             const approversPath = releasePath + '?approvers=1';
@@ -972,6 +1008,8 @@ ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
             const renderCandidate = async (status = 200, error = '') => {
               const decisions = await workspaces.releaseEnvironmentDecisions(actor, workspaceId, projectId, selected);
               const grants = await workspaces.releaseApproverGrants(actor, workspaceId, projectId, actor);
+              const options = project.role === 'owner'
+                ? await workspaces.releaseActivationOptions(actor, workspaceId, projectId, selected) : [];
               const records = decisions.map(decision => `<li><strong>${escapeHtml(decision.environment)} · ${escapeHtml(decision.decision)}</strong>
 · ${new Date(decision.decided_at).toISOString()} by <code>${decision.reviewer_id}</code>
 <p class="preserve">${escapeHtml(decision.reason)}</p>${decision.expires_at
@@ -986,13 +1024,21 @@ ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
 <textarea id="decision-${grant.environment}" name="reason" required maxlength="1000"></textarea>
 <button name="decision" value="approved">Approve for ${escapeHtml(grant.environment)}</button>
 <button name="decision" value="denied">Deny for ${escapeHtml(grant.environment)}</button></form></section>`);
+              const selections = options.filter(option => option.current_candidate_id !== selected).map(option => `<section>
+<h3>Release selection for ${escapeHtml(option.environment)}</h3>
+<form method="post" action="${releasePath}?environment=${escapeHtml(option.environment)}">
+<input type="hidden" name="candidate" value="${selected}"><input type="hidden" name="previous" value="${option.previous_id ?? ''}">
+<label for="selection-${option.environment}">Reason for ${escapeHtml(option.environment)} selection</label>
+<textarea id="selection-${option.environment}" name="reason" required maxlength="1000"></textarea>
+<button name="operation" value="${option.previously_active ? 'rollback' : 'promote'}">${option.previously_active ? 'Select for rollback' : 'Select for release'}</button>
+</form></section>`);
               return page(back + `<h2>Release candidate</h2><p>Proposed ${new Date(candidate.proposed_at).toISOString()} by <code>${candidate.proposed_by}</code></p>
 <p>Commit <code>${candidate.commit_sha}</code> · Archive SHA-256 <code>${candidate.archive_sha256}</code></p>
 <p class="preserve">${escapeHtml(candidate.reason)}</p>
 <p><a href="${escapeHtml(repository + '&archive=runs&run=' + candidate.run_id)}">View Node test evidence</a> ·
 <a href="${escapeHtml(repository + '&archive=download')}">Download candidate archive</a></p>
 <h3>Environment decisions</h3>${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
-${records.length ? '<ol>' + records.join('') + '</ol>' : '<p>No environment decisions recorded.</p>'}${forms.join('')}`, status);
+${records.length ? '<ol>' + records.join('') + '</ol>' : '<p>No environment decisions recorded.</p>'}${forms.join('')}${selections.join('')}`, status);
             };
             if (request.method === 'GET') return renderCandidate();
             if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') return renderCandidate(415, 'Submit the release decision form.');
@@ -1020,6 +1066,7 @@ ${records.length ? '<ol>' + records.join('') + '</ol>' : '<p>No environment deci
           const items = candidates.map(candidate => `<li><a href="${releasePath}?candidate=${candidate.id}">Candidate for <code>${candidate.commit_sha}</code></a>
 · ${new Date(candidate.proposed_at).toISOString()}</li>`);
           return page(`<h2>Release candidates</h2>${project.role === 'owner' ? `<p><a href="${releasePath}?approvers=1">Manage release approvers</a></p>` : ''}
+<p><a href="${releasePath}?environment=staging">Staging selection</a> · <a href="${releasePath}?environment=production">Production selection</a></p>
 ${items.length ? '<ol>' + items.join('') + '</ol>' :
             `<p>No release candidates. Prepare one from a passing run in <a href="${navigationProject.path}/repository">Repository</a>.</p>`}`);
         }
