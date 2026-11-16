@@ -15,7 +15,17 @@ test('hosted intake derives identity from a real expiring database session', asy
     return { query: (sql, values) => db.query(sql, values), release() {} };
   } };
   const publicOrigin = 'https://alchemy.example';
-  const handle = hostedApi({ pool, publicOrigin });
+  let githubCalls = 0;
+  const githubCommit = 'a'.repeat(40);
+  const githubTree = 'b'.repeat(40);
+  const handle = hostedApi({ pool, publicOrigin, async githubRequest(url, options) {
+    githubCalls++;
+    assert.equal(options.redirect, 'error');
+    const expected = 'https://api.github.com/repos/octocat/hello-world/git/commits/';
+    assert.ok(url.startsWith(expected));
+    return url === expected + githubCommit
+      ? Response.json({ sha: githubCommit, tree: { sha: githubTree } }) : new Response(null, { status: 404 });
+  } });
   const sessions = sessionStore(pool);
   const identity = subject => ({ issuer: 'https://issuer.example', subject });
   const workspace = '00000000-0000-4000-8000-000000000001';
@@ -125,6 +135,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/028_project_submission_history.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/030_workspace_member_grants.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/032_workspace_member_role_changes.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/033_project_source_revisions.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -196,6 +207,21 @@ test('hosted intake derives identity from a real expiring database session', asy
       const reviewPage = projectPage + '/missions/' + mission.id;
       const reviewerForm = { ...headers, Origin: publicOrigin, 'Content-Type': 'application/x-www-form-urlencoded' };
       const viewerHeaders = { ...reviewerForm, Cookie: '__Host-alchemy_session=' + viewer };
+      const repositoryPath = projectPage + '/repository';
+      const sourceForm = (repository, revision) => new URLSearchParams({ repository, revision }).toString();
+      const githubRepo = 'https://github.com/octocat/Hello-World';
+      assert.match((await visit(repositoryPath, headers)).body, /No repository revisions recorded/);
+      assert.equal((await visit(repositoryPath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
+      assert.equal((await visit(repositoryPath, viewerHeaders, sourceForm(githubRepo, githubCommit))).status, 403);
+      assert.equal((await visit(repositoryPath, reviewerForm, sourceForm('https://example.org/a/b', githubCommit))).status, 400);
+      assert.equal(githubCalls, 0);
+      assert.equal((await visit(repositoryPath, reviewerForm, sourceForm(githubRepo, 'c'.repeat(40)))).status, 422);
+      assert.equal((await visit(repositoryPath, reviewerForm, sourceForm(githubRepo, githubCommit))).status, 303);
+      assert.equal((await visit(repositoryPath, reviewerForm, sourceForm(githubRepo, githubCommit))).status, 303);
+      const sourceHistory = await visit(repositoryPath, viewerHeaders);
+      assert.match(sourceHistory.body, new RegExp(githubTree));
+      assert.equal(sourceHistory.body.split(githubTree).length, 2);
+      assert.doesNotMatch(sourceHistory.body, /Verify and record revision/);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal((await visit(reviewPage, viewerHeaders, 'version=0&decision=accepted&evidence=Denied')).status, 403);

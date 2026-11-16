@@ -4,6 +4,7 @@ import { sessionStore } from '../../db/session-store.mjs';
 import { readFile } from 'node:fs/promises';
 import { retrieve } from '../../docs/flex-alchemy/knowledge/retrieve.mjs';
 import { randomUUID } from 'node:crypto';
+import { parseGitHubSource, verifyGitHubSource } from './github-source.mjs';
 
 const style = await readFile(new URL('../local/style.css', import.meta.url), 'utf8');
 
@@ -11,7 +12,7 @@ const id = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}';
 const projects = new RegExp('^/api/workspaces/(' + id + ')/projects$');
 const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/team/grant|/knowledge|/settings/audit|/reviews|/projects/new)?$');
 const accountIdPattern = new RegExp('^' + id + '$');
-const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions)?$');
+const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions|/repository)?$');
 const missions = new RegExp('^/api/workspaces/(' + id + ')/projects/(' + id + ')/missions$');
 const reviewRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')/missions/(' + id + ')(/export|/sources|/verification|/revise|/plan)?$');
 const decisionLabel = decision => decision === 'accepted' ? 'Accepted by reviewer' : 'Changes requested';
@@ -74,7 +75,7 @@ ${signedIn ? link('/account', 'Account') : ''}${link('/access-help', 'Access hel
 
 function projectNavigation(path, project) {
   const destinations = [
-    ['', 'Overview'], ['/missions', 'Missions'], ['/plans', 'Plans'], ['/decisions', 'Plan decisions'], ['/reviews', 'Pending reviews'], ['/evidence', 'Evidence'],
+    ['', 'Overview'], ['/missions', 'Missions'], ['/plans', 'Plans'], ['/decisions', 'Plan decisions'], ['/reviews', 'Pending reviews'], ['/evidence', 'Evidence'], ['/repository', 'Repository'],
   ];
   const activePath = path.startsWith(project.path + '/missions/') ? project.path + '/missions' : path;
   const links = destinations.map(([suffix, label]) => {
@@ -140,7 +141,7 @@ async function missionInput(request) {
   return value;
 }
 
-export function hostedApi({ pool, publicOrigin, browserFlow }) {
+export function hostedApi({ pool, publicOrigin, browserFlow, githubRequest = fetch }) {
   const origin = new URL(publicOrigin);
   if (origin.protocol !== 'https:' || origin.origin !== publicOrigin) {
     throw new TypeError('The public origin must be an HTTPS origin without a path');
@@ -885,11 +886,45 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
         if (!project) return page('<a href="/">All workspaces</a><h2>Project unavailable</h2>', 404);
         navigationWorkspace = { id: workspaceId, role: project.role };
         navigationProject = { path: `/workspaces/${workspaceId}/projects/${projectId}`, name: project.name };
+        if (action === '/repository') {
+          const writable = ['owner', 'editor'].includes(project.role);
+          const render = async (status = 200, message = '', repository = '', revision = '') => {
+            const sources = await workspaces.projectSources(actor, workspaceId, projectId);
+            const entries = sources.map(source => {
+              const name = source.owner_name + '/' + source.repository_name;
+              return `<li><a href="https://github.com/${escapeHtml(name)}/commit/${source.commit_sha}">${escapeHtml(name)} · ${source.commit_sha}</a>
+<p>Tree <code>${source.tree_sha}</code> · Recorded ${new Date(source.recorded_at).toISOString()} by <code>${source.recorded_by}</code></p></li>`;
+            });
+            return page(`<h2>Repository revisions</h2>${entries.length ? '<p>Showing up to 50 recently recorded revisions.</p><ol>' + entries.join('') + '</ol>' : '<p>No repository revisions recorded.</p>'}
+${writable ? `<section><h3>Record a public GitHub revision</h3>
+<p>Flex Alchemy checks the commit and saves its tree identifier as project evidence.</p>
+${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
+<form method="post"><label for="repository">GitHub repository URL</label>
+<input id="repository" name="repository" type="url" maxlength="165" value="${escapeHtml(repository)}" required>
+<label for="revision">Full commit SHA</label><input id="revision" name="revision" maxlength="40" value="${escapeHtml(revision)}" required>
+<button>Verify and record revision</button></form></section>` : ''}`, status);
+          };
+          if (request.method === 'GET') return render();
+          if (!writable) return page('<h2>Your role cannot record repository revisions</h2>', 403);
+          if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
+            return render(415, 'Submit the repository form.');
+          }
+          const form = new URLSearchParams(await request.text());
+          const repository = (form.get('repository') ?? '').trim().slice(0, 166);
+          const revision = (form.get('revision') ?? '').trim().slice(0, 41);
+          const source = form.size === 2 && parseGitHubSource(repository, revision);
+          if (!source) return render(400, 'Enter a public GitHub repository URL and a 40-character commit SHA.', repository, revision);
+          const result = await verifyGitHubSource(source, githubRequest);
+          if (result.status === 'missing') return render(422, 'GitHub could not find this public repository revision.', repository, revision);
+          if (result.status !== 'verified') return render(503, 'GitHub verification is temporarily unavailable. Try again shortly.', repository, revision);
+          await workspaces.recordProjectSource(actor, workspaceId, projectId, source, result.tree);
+          return new Response(null, { status: 303, headers: { Location: url.pathname, 'Cache-Control': 'no-store' } });
+        }
         if (action === '/delete') {
           const backToProject = `<a href="${navigationProject.path}">Back to project</a>`;
           if (project.role !== 'owner') return page(backToProject + '<h2>Only workspace owners can delete projects</h2>', 403);
           if (request.method === 'GET') return page(backToProject + `<h2>Delete ${escapeHtml(project.name)}?</h2>
-<p>Only projects with no missions or saved drafts can be deleted.</p>
+<p>Only projects with no missions or saved drafts can be deleted. Deleting a project also removes its recorded repository revisions.</p>
 <form method="post"><input type="hidden" name="expectedName" value="${escapeHtml(project.name)}">
 <button>Delete project permanently</button></form>`);
           if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/x-www-form-urlencoded') {

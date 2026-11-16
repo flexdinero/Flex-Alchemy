@@ -64,6 +64,20 @@ export function workspaceStore(pool) {
   }
 
   return {
+    projectSources(actorId, workspaceId, projectId) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT owner_name, repository_name, commit_sha, tree_sha, recorded_by, recorded_at
+          FROM alchemy.project_source_revisions WHERE workspace_id = $1 AND project_id = $2
+          ORDER BY recorded_at DESC, owner_name, repository_name, commit_sha LIMIT 50`, [workspaceId, projectId])
+      ).rows);
+    },
+    recordProjectSource(actorId, workspaceId, projectId, source, tree) {
+      return asActor(actorId, client => client.query(`INSERT INTO alchemy.project_source_revisions
+        (workspace_id, project_id, owner_name, repository_name, commit_sha, tree_sha, recorded_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (workspace_id, project_id, owner_name, repository_name, commit_sha) DO NOTHING`,
+      [workspaceId, projectId, source.owner, source.repository, source.commit, tree, actorId]));
+    },
     revocationAudit(actorId, workspaceId) {
       requireId(workspaceId, 'Workspace');
       return asActor(actorId, async client => (
