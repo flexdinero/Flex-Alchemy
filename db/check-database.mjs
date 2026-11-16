@@ -57,6 +57,7 @@ export async function checkDatabase(pool) {
       has_function_privilege(current_user, 'alchemy.resolve_actor(text,text)', 'EXECUTE')
       AND has_function_privilege(current_user, 'alchemy.session_actor(text)', 'EXECUTE')
       AND has_function_privilege(current_user, 'alchemy.revoke_session(text)', 'EXECUTE')
+      AND has_function_privilege(current_user, 'alchemy.revoke_other_sessions(text)', 'EXECUTE')
       AND has_function_privilege(current_user, 'alchemy.consume_login_attempt(text,text)', 'EXECUTE')
       AND has_function_privilege(current_user, 'alchemy.cleanup_expired_identity_records()', 'EXECUTE')
       AND has_table_privilege(current_user, 'alchemy.sessions', 'INSERT')

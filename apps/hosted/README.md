@@ -4,6 +4,8 @@ The hosted request handler serves workspace, project and mission listing, projec
 
 Open **Account** to find your Flex Alchemy account ID, see which workspaces you can access, and sign out of the current browser. If you need workspace access, share the account ID with your workspace administrator. Your sign-in provider manages account recovery.
 
+With migration 029 applied, **Sign out of other Flex Alchemy sessions** revokes the account's other app sessions and keeps the current browser signed in. Provider-managed sessions are controlled through the identity provider.
+
 Workspace members can open **Recent activity** for the latest 50 recorded mission creations and review decisions. Each entry links to its mission. Earlier missions without a recorded creation timestamp still show their recorded reviews.
 
 Submitting the same mission form twice preserves one mission. JSON clients can send a UUID in the `Idempotency-Key` header and reuse it when retrying the same request. Reusing the key for different mission text returns HTTP 409. Keys are scoped to the signed-in actor and project.

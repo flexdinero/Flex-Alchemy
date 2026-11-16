@@ -65,5 +65,11 @@ export function sessionStore(pool) {
       if (!validToken(token)) return Promise.resolve();
       return identityQuery(client => client.query('SELECT alchemy.revoke_session($1)', [digest(token)]));
     },
+    revokeOthers(token) {
+      if (!validToken(token)) return Promise.resolve(false);
+      return identityQuery(async client => (
+        await client.query('SELECT alchemy.revoke_other_sessions($1) AS authorized', [digest(token)])
+      ).rows[0].authorized);
+    },
   };
 }

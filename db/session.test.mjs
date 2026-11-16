@@ -7,7 +7,7 @@ test('sessions resolve an actor until expiry or revocation', async () => {
   const db = new PGlite();
   try {
     for (const name of ['001_workspace_boundary.sql', '002_actor_identity.sql', '003_sessions.sql',
-      '004_login_attempts.sql', '005_identity_cleanup.sql']) {
+      '004_login_attempts.sql', '005_identity_cleanup.sql', '029_revoke_other_sessions.sql']) {
       await db.exec(await readFile(new URL('./migrations/' + name, import.meta.url), 'utf8'));
     }
     await db.exec('SET ROLE alchemy_identity');
@@ -40,6 +40,19 @@ test('sessions resolve an actor until expiry or revocation', async () => {
     const origin = 'https://alchemy.example';
     const handle = hostedApi({ pool, publicOrigin: origin });
     const cookie = '__Host-alchemy_session=' + token;
+    const other = await sessions.issue({ issuer: 'https://issuer.example', subject: 'subject' });
+    const unrelated = await sessions.issue({ issuer: 'https://issuer.example', subject: 'other-user' });
+    const revokeOthers = headers => handle(new Request(origin + '/account/sessions/revoke-others', { method: 'POST', headers }));
+    assert.equal((await revokeOthers({ origin })).status, 401);
+    assert.equal((await revokeOthers({ origin: 'https://other.example', cookie })).status, 403);
+    assert.equal(await sessions.actor(other), actor);
+    const revoked = await revokeOthers({ origin, cookie });
+    assert.equal(revoked.status, 200);
+    assert.match(await revoked.text(), /Other Flex Alchemy sessions ended/);
+    assert.equal(await sessions.actor(other), null);
+    assert.equal(await sessions.actor(token), actor);
+    assert.ok(await sessions.actor(unrelated));
+    assert.equal((await revokeOthers({ origin, cookie: '__Host-alchemy_session=' + other })).status, 401);
     const signOut = headers => handle(new Request(origin + '/api/sign-out', { method: 'POST', headers }));
     assert.equal((await signOut({ origin, cookie: cookie + '; ' + cookie })).status, 401);
     assert.equal((await signOut({ origin: 'https://other.example', cookie })).status, 403);

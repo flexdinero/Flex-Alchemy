@@ -179,6 +179,12 @@ export function hostedApi({ pool, publicOrigin, browserFlow }) {
       }
       const actor = await sessions.actor(token);
       signedIn = Boolean(actor);
+      if (request.method === 'POST' && url.pathname === '/account/sessions/revoke-others') {
+        if (!actor || !await sessions.revokeOthers(token)) {
+          return page('<h2>Sign in required</h2><p><a href="/account">Return to Account</a></p>', 401);
+        }
+        return page('<h2>Other Flex Alchemy sessions ended</h2><p>This browser remains signed in.</p><p><a href="/account">Return to Account</a></p>');
+      }
       if (request.method === 'GET' && url.pathname === '/account') {
         if (!actor) return page(`<h2>Sign in to view your account</h2>
 ${browserFlow ? '<p><a href="/auth/sign-in">Sign in</a></p>' : '<p>Sign-in is currently unavailable.</p>'}
@@ -189,6 +195,7 @@ ${browserFlow ? '<p><a href="/auth/sign-in">Sign in</a></p>' : '<p>Sign-in is cu
           ? workspaceLinks(entries)
           : '<p>You do not have access to any workspaces.</p>'}
 <p><a href="/access-help">Get workspace access or recover your sign-in</a></p>
+<form method="post" action="/account/sessions/revoke-others"><button>Sign out of other Flex Alchemy sessions</button></form>
 <form method="post" action="/sign-out"><button>Sign out of this browser</button></form>`);
       }
       if (request.method === 'GET' && url.pathname === '/access-help') {
