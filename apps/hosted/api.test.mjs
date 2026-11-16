@@ -54,6 +54,9 @@ test('hosted intake derives identity from a real expiring database session', asy
     assert.equal(account.status, 200);
     assert.equal(account.headers.get('cache-control'), 'no-store');
     const accountContent = await account.text();
+    assert.match(accountContent, /<title>Account \| Flex Alchemy<\/title>/);
+    assert.match(accountContent, /class="alchemy-workspace"/);
+    assert.match(accountContent, /href="\/account" aria-current="page"/);
     assert.ok(accountContent.includes(actor));
     assert.ok(accountContent.includes('href="' + workspacePath + '">Workspace</a>'));
     assert.match(accountContent, /action="\/sign-out"/);

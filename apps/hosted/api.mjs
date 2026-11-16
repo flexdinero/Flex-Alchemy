@@ -63,11 +63,12 @@ ${digest === undefined ? '' : `<input type="hidden" name="draftDigest" value="${
 function navigation(path, workspace = null, signedIn = false) {
   const link = (href, label) => `<a href="${href}"${href === path ? ' aria-current="page"' : ''}>${label}</a>`;
   const base = workspace && '/workspaces/' + workspace.id;
-  return `<header class="hosted-header"><a href="/">Flex Alchemy</a>
+  return `<aside class="workspace-sidebar"><a class="workspace-brand" href="/"><span class="brand-mark" aria-hidden="true">✦</span><span>Flex <span>Alchemy</span></span></a>
+<div class="workspace-identity"><span aria-hidden="true">FA</span><div>${escapeHtml(workspace?.name ?? 'Flex Alchemy')}<small>${workspace ? 'Workspace' : 'Flex Alchemy workspace'}</small></div></div>
 <nav aria-label="Main navigation">${link('/', 'Workspaces')}
 ${base ? link(base, 'Projects') + link(base + '/activity', 'Activity') + link(base + '/knowledge', 'Knowledge') + link(base + '/reviews', 'Workspace reviews') : ''}
 ${workspace?.role === 'owner' ? link(base + '/team', 'Team access') : ''}
-${signedIn ? link('/account', 'Account') : ''}${link('/access-help', 'Access help')}</nav></header>`;
+${signedIn ? link('/account', 'Account') : ''}${link('/access-help', 'Access help')}</nav></aside>`;
 }
 
 function projectNavigation(path, project) {
@@ -85,10 +86,14 @@ function projectNavigation(path, project) {
 }
 
 function homePage(content, status = 200, path = '/', workspace = null, project = null, signedIn = false) {
-  return new Response(`<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Flex Alchemy</title>
-<link rel="stylesheet" href="/style.css"><body><a class="skip" href="#main">Skip to content</a>
-${navigation(path, workspace, signedIn)}<main id="main" tabindex="-1"><h1>Flex Alchemy</h1>${project ? projectNavigation(path, project) : ''}${content}</main></body></html>`, { status, headers: {
+  const title = status === 404 ? 'Page unavailable' : status >= 500 ? 'Workspace unavailable'
+    : project?.name ?? workspace?.name ?? (path === '/account' ? 'Account' : path === '/access-help' ? 'Access help' : 'Workspaces');
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} | Flex Alchemy</title>
+<link rel="stylesheet" href="/style.css"></head><body class="alchemy-workspace"><a class="skip" href="#main">Skip to content</a>
+${navigation(path, workspace, signedIn)}
+<div class="workspace-body"><header class="workspace-topbar"><span>Workspace</span><span aria-hidden="true">›</span><strong>${escapeHtml(title)}</strong></header>
+<main id="main" tabindex="-1"><h1>Flex Alchemy</h1>${project ? projectNavigation(path, project) : ''}${content}</main></div></body></html>`, { status, headers: {
     'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
     'Content-Security-Policy': "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   } });

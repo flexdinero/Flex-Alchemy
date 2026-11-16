@@ -91,12 +91,24 @@ const insertReview = db.prepare(`INSERT INTO mission_reviews (mission_id, decisi
 const decisionLabel = decision => decision === 'accepted' ? 'Accepted by operator' : 'Changes requested';
 
 function send(response, status, title, content) {
+  const path = (response.req.url ?? '/').split('?')[0];
+  const destinations = [
+    ['/projects', 'Projects', '▦'],
+    ['/missions', 'Missions', '◎'],
+    ['/', 'Verification runs', '◇'],
+  ];
+  const current = path.startsWith('/projects') ? '/projects' : path.startsWith('/missions') ? '/missions' : '/';
+  const links = destinations.map(([href, label, icon]) =>
+    `<a href="${href}"${status < 400 && href === current ? ` aria-current="${path === href ? 'page' : 'location'}"` : ''}><span aria-hidden="true">${icon}</span>${label}</a>`).join('');
   response.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
   response.end(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} | Flex Alchemy</title>
-<link rel="stylesheet" href="/style.css"></head><body><a class="skip" href="#main">Skip to content</a>
-<header><a href="/">Flex Alchemy</a><nav aria-label="Workspace"><a href="/projects">Projects</a> · <a href="/missions">Missions</a> · <a href="/">Runs</a></nav></header>
-<main id="main">${content}</main></body></html>`);
+<link rel="stylesheet" href="/style.css"></head><body class="alchemy-workspace"><a class="skip" href="#main">Skip to content</a>
+<aside class="workspace-sidebar"><a class="workspace-brand" href="/"><span class="brand-mark" aria-hidden="true">✦</span><span>Flex <span>Alchemy</span></span></a>
+<div class="workspace-identity"><span aria-hidden="true">FA</span><div>Flex Alchemy<small>Local workspace</small></div></div>
+<nav aria-label="Workspace">${links}</nav></aside>
+<div class="workspace-body"><header class="workspace-topbar"><span>Workspace</span><span aria-hidden="true">›</span><strong>${esc(title)}</strong></header>
+<main id="main" tabindex="-1"${status === 200 && destinations.some(([href]) => href === path) ? ' class="workspace-overview"' : ''}>${content}</main></div></body></html>`);
 }
 
 const run = (...args) => execute(process.execPath, [cli, ...args], { timeout: 40_000, windowsHide: true });
