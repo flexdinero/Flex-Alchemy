@@ -6,6 +6,8 @@ Open **Account** to find your Flex Alchemy account ID, see which workspaces you 
 
 After migration 033, open **Repository** inside a project to record the exact commit and tree identifiers of a public GitHub revision. Owners and Editors can submit a repository URL and full commit SHA. Viewers can inspect the recorded revisions. GitHub is queried without credentials, and the recorded data consists of identifiers and attribution. The workflow does not download or execute repository files.
 
+Use **Browse files for this revision** to inspect directory entries at the recorded tree. The preview follows directory references from that tree, lists up to 100 entries per page, and links to the pinned revision on GitHub for larger or deeper directories.
+
 With migration 029 applied, **Sign out of other Flex Alchemy sessions** revokes the account's other app sessions and keeps the current browser signed in. Provider-managed sessions are controlled through the identity provider.
 
 Workspace members can open **Recent activity** for the latest 50 recorded mission creations and review decisions. Each entry links to its mission. Earlier missions without a recorded creation timestamp still show their recorded reviews.

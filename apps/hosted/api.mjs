@@ -4,7 +4,7 @@ import { sessionStore } from '../../db/session-store.mjs';
 import { readFile } from 'node:fs/promises';
 import { retrieve } from '../../docs/flex-alchemy/knowledge/retrieve.mjs';
 import { randomUUID } from 'node:crypto';
-import { parseGitHubSource, verifyGitHubSource } from './github-source.mjs';
+import { inspectGitHubDirectory, parseGitHubSource, verifyGitHubSource } from './github-source.mjs';
 
 const style = await readFile(new URL('../local/style.css', import.meta.url), 'utf8');
 
@@ -12,6 +12,10 @@ const id = '[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}';
 const projects = new RegExp('^/api/workspaces/(' + id + ')/projects$');
 const workspaceRoute = new RegExp('^/workspaces/(' + id + ')(/export|/activity|/team|/team/grant|/knowledge|/settings/audit|/reviews|/projects/new)?$');
 const accountIdPattern = new RegExp('^' + id + '$');
+const browsableDirectory = path => path.length <= 700 && path.split('/').length <= 8
+  && path.split('/').every(part => part && !['.', '..'].includes(part) && !/[\u0000-\u001f\u007f]/.test(part));
+const repositoryPreview = (path, name, commit, directory = '', offset = 0) => path + '?'
+  + new URLSearchParams({ repository: name, commit, ...(directory ? { directory } : {}), ...(offset ? { offset: String(offset) } : {}) });
 const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions|/repository)?$');
 const missions = new RegExp('^/api/workspaces/(' + id + ')/projects/(' + id + ')/missions$');
 const reviewRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')/missions/(' + id + ')(/export|/sources|/verification|/revise|/plan)?$');
@@ -887,12 +891,57 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
         navigationWorkspace = { id: workspaceId, role: project.role };
         navigationProject = { path: `/workspaces/${workspaceId}/projects/${projectId}`, name: project.name };
         if (action === '/repository') {
+          if (request.method === 'GET' && (url.searchParams.has('commit') || url.searchParams.has('repository'))) {
+            const back = `<a href="${url.pathname}">Back to repository revisions</a>`;
+            const name = url.searchParams.get('repository') ?? '';
+            const commit = url.searchParams.get('commit') ?? '';
+            const source = parseGitHubSource('https://github.com/' + name, commit);
+            const directory = url.searchParams.get('directory') ?? '';
+            const offsetText = url.searchParams.get('offset') ?? '0';
+            if (!source || (directory && !browsableDirectory(directory)) || !/^\d{1,5}$/.test(offsetText)) {
+              return page(back + '<h2>Invalid repository preview address</h2>', 400);
+            }
+            const recorded = await workspaces.projectSource(actor, workspaceId, projectId, source);
+            if (!recorded) return page(back + '<h2>Repository revision unavailable</h2>', 404);
+            const segments = directory ? directory.split('/') : [];
+            const listing = await inspectGitHubDirectory(source, recorded.tree_sha, segments, githubRequest);
+            const canonicalName = source.owner + '/' + source.repository;
+            const github = `https://github.com/${canonicalName}/tree/${source.commit}`;
+            const openGitHub = `<p><a href="${github}">Open the pinned revision on GitHub</a></p>`;
+            if (listing.status !== 'verified') {
+              const message = { missing: 'GitHub could not find the recorded tree or directory.',
+                'too-large': 'The directory is too large to preview here.',
+                unavailable: 'GitHub could not provide the tree. Try again shortly.' }[listing.status];
+              return page(back + '<h2>Repository preview unavailable</h2><p>' + message + '</p>' + openGitHub,
+                listing.status === 'missing' ? 404 : listing.status === 'too-large' ? 422 : 503);
+            }
+            const offset = Number(offsetText);
+            const pageSize = 100;
+            const count = listing.entries.length;
+            if (offset && (offset % pageSize !== 0 || offset >= count)) {
+              return page(back + '<h2>Repository preview page unavailable</h2>', 404);
+            }
+            const browse = (path, start) => escapeHtml(repositoryPreview(url.pathname, canonicalName, source.commit, path, start));
+            const rows = listing.entries.slice(offset, offset + pageSize).map(entry => {
+              const childPath = [...segments, entry.path].join('/');
+              const label = escapeHtml(entry.path);
+              const type = { tree: 'Directory', blob: 'File', commit: 'Submodule' }[entry.type];
+              return `<li>${entry.type === 'tree' && browsableDirectory(childPath)
+                ? `<a href="${browse(childPath)}">${label}</a>` : `<code>${label}</code>`} · ${type}</li>`;
+            });
+            return page(back + `<h2>Repository preview</h2><p>${escapeHtml(canonicalName)} · <code>${source.commit}</code></p>
+<p>Directory <code>/${escapeHtml(directory)}</code></p>${directory ? `<p><a href="${browse(segments.slice(0, -1).join('/'))}">Parent directory</a></p>` : ''}${openGitHub}
+${count ? `<p>Showing ${offset + 1}–${Math.min(offset + pageSize, count)} of ${count} entries.</p><ul>${rows.join('')}</ul>` : '<p>This directory is empty.</p>'}
+${offset ? `<p><a href="${browse(directory, offset - pageSize)}">Previous entries</a></p>` : ''}
+${offset + pageSize < count ? `<p><a href="${browse(directory, offset + pageSize)}">Next entries</a></p>` : ''}`);
+          }
           const writable = ['owner', 'editor'].includes(project.role);
           const render = async (status = 200, message = '', repository = '', revision = '') => {
             const sources = await workspaces.projectSources(actor, workspaceId, projectId);
             const entries = sources.map(source => {
               const name = source.owner_name + '/' + source.repository_name;
               return `<li><a href="https://github.com/${escapeHtml(name)}/commit/${source.commit_sha}">${escapeHtml(name)} · ${source.commit_sha}</a>
+<p><a href="${escapeHtml(repositoryPreview(url.pathname, name, source.commit_sha))}">Browse files for this revision</a></p>
 <p>Tree <code>${source.tree_sha}</code> · Recorded ${new Date(source.recorded_at).toISOString()} by <code>${source.recorded_by}</code></p></li>`;
             });
             return page(`<h2>Repository revisions</h2>${entries.length ? '<p>Showing up to 50 recently recorded revisions.</p><ol>' + entries.join('') + '</ol>' : '<p>No repository revisions recorded.</p>'}

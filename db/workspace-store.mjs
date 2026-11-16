@@ -64,6 +64,13 @@ export function workspaceStore(pool) {
   }
 
   return {
+    projectSource(actorId, workspaceId, projectId, source) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT tree_sha FROM alchemy.project_source_revisions
+          WHERE workspace_id = $1 AND project_id = $2 AND owner_name = $3 AND repository_name = $4 AND commit_sha = $5`,
+        [workspaceId, projectId, source.owner, source.repository, source.commit])
+      ).rows[0] ?? null);
+    },
     projectSources(actorId, workspaceId, projectId) {
       return asActor(actorId, async client => (
         await client.query(`SELECT owner_name, repository_name, commit_sha, tree_sha, recorded_by, recorded_at

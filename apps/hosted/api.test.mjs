@@ -18,10 +18,18 @@ test('hosted intake derives identity from a real expiring database session', asy
   let githubCalls = 0;
   const githubCommit = 'a'.repeat(40);
   const githubTree = 'b'.repeat(40);
+  const githubNestedTree = 'd'.repeat(40);
   const handle = hostedApi({ pool, publicOrigin, async githubRequest(url, options) {
     githubCalls++;
     assert.equal(options.redirect, 'error');
-    const expected = 'https://api.github.com/repos/octocat/hello-world/git/commits/';
+    const base = 'https://api.github.com/repos/octocat/hello-world/git/';
+    if (url === base + 'trees/' + githubTree) {
+      return Response.json({ sha: githubTree, tree: [{ path: 'src', type: 'tree', sha: githubNestedTree }] });
+    }
+    if (url === base + 'trees/' + githubNestedTree) {
+      return Response.json({ sha: githubNestedTree, tree: [{ path: 'index<&>.js', type: 'blob', sha: 'e'.repeat(40) }] });
+    }
+    const expected = base + 'commits/';
     assert.ok(url.startsWith(expected));
     return url === expected + githubCommit
       ? Response.json({ sha: githubCommit, tree: { sha: githubTree } }) : new Response(null, { status: 404 });
@@ -222,6 +230,18 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.match(sourceHistory.body, new RegExp(githubTree));
       assert.equal(sourceHistory.body.split(githubTree).length, 2);
       assert.doesNotMatch(sourceHistory.body, /Verify and record revision/);
+      assert.match(sourceHistory.body, /Browse files for this revision/);
+      const previewPath = repositoryPath + '?' + new URLSearchParams({ repository: 'octocat/hello-world', commit: githubCommit });
+      const callsBeforePreview = githubCalls;
+      assert.equal((await visit(previewPath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
+      assert.equal((await visit(previewPath + '&directory=..', viewerHeaders)).status, 400);
+      assert.equal(githubCalls, callsBeforePreview);
+      assert.match((await visit(previewPath, viewerHeaders)).body, />src<\/a> · Directory/);
+      const nested = await visit(previewPath + '&directory=src', viewerHeaders);
+      assert.equal(nested.status, 200);
+      assert.match(nested.body, /index&lt;&amp;&gt;\.js/);
+      assert.match(nested.body, /Parent directory/);
+      assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
       assert.equal((await visit(reviewPage, viewerHeaders, 'version=0&decision=accepted&evidence=Denied')).status, 403);
