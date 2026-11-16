@@ -124,6 +124,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/027_project_submission.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/028_project_submission_history.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/030_workspace_member_grants.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/032_workspace_member_role_changes.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -717,6 +718,22 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal((await request(path, teammate, input)).status, 403);
       assert.deepEqual((await db.query('SELECT role, granted_by FROM alchemy.memberships WHERE workspace_id = $1 AND actor_id = $2',
         [workspace, teammateId])).rows, [{ role: 'viewer', granted_by: ownerActor }]);
+      const roleHistory = teamPath + '?history=roles';
+      const changeRole = (token, member, previous) => visit(teamPath, {
+        ...reviewerForm, Cookie: '__Host-alchemy_session=' + token,
+      }, new URLSearchParams({ member, previous, changeRole: 'yes' }).toString());
+      assert.match((await visit(roleHistory, ownerHeaders)).body, /No role changes recorded/);
+      assert.match((await visit(teamPath + '?edit-role=' + teammateId, ownerHeaders)).body, /Change role to editor/);
+      assert.equal((await changeRole(editor, teammateId, 'viewer')).status, 403);
+      assert.equal((await changeRole(owner, ownerActor, 'viewer')).status, 409);
+      const roleChange = await changeRole(owner, teammateId, 'viewer');
+      assert.equal(roleChange.status, 303);
+      assert.equal(roleChange.headers.location, roleHistory);
+      assert.equal((await changeRole(owner, teammateId, 'viewer')).status, 409);
+      assert.equal((await request(roleHistory, teammate)).status, 403);
+      assert.match((await visit(roleHistory, ownerHeaders)).body, /changed from viewer to\s+editor/);
+      const teammateWorkspace = await request(workspacePath, teammate);
+      assert.match(await teammateWorkspace.text(), /projects\/new/);
       const revoke = (token, member) => visit(teamPath, {
         ...reviewerForm, Cookie: '__Host-alchemy_session=' + token,
       }, new URLSearchParams({ member, confirm: 'yes' }).toString());

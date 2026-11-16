@@ -384,12 +384,24 @@ ${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
         if (workspaceMatch[2] === '/team') {
           const backToWorkspace = `<a href="/workspaces/${workspace.id}">Back to workspace</a>`;
           if (request.method === 'POST') {
-            if (workspace.role !== 'owner') return page(backToWorkspace + '<h2>Only owners can revoke access</h2>', 403);
+            if (workspace.role !== 'owner') return page(backToWorkspace + '<h2>Only owners can manage team access</h2>', 403);
             if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') {
               return page(backToWorkspace + '<h2>Submit the team access form</h2>', 415);
             }
             const form = new URLSearchParams(await request.text());
             const member = form.get('member');
+            if (form.has('changeRole')) {
+              const previous = form.get('previous');
+              if (form.size !== 3 || form.get('changeRole') !== 'yes' || !accountIdPattern.test(member ?? '')
+                || !['editor', 'viewer'].includes(previous)) {
+                return page(backToWorkspace + '<h2>Submit a valid role change</h2>', 400);
+              }
+              const next = previous === 'viewer' ? 'editor' : 'viewer';
+              if (!await workspaces.changeWorkspaceMemberRole(actor, workspace.id, member, previous, next)) {
+                return page(`<a href="${url.pathname}">Return to team access</a><h2>The role could not be changed</h2><p>Check the member’s current access and try again.</p>`, 409);
+              }
+              return new Response(null, { status: 303, headers: { Location: url.pathname + '?history=roles', 'Cache-Control': 'no-store' } });
+            }
             if (form.size !== 2 || form.get("confirm") !== "yes" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(member ?? '')) {
               return page(backToWorkspace + '<h2>Choose a team member</h2>', 400);
             }
@@ -400,6 +412,29 @@ ${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
           }
           const team = await workspaces.workspaceTeam(actor, workspace.id);
           if (!team.length) return page(backToWorkspace + '<h2>Team access is available to workspace owners</h2>', 403);
+          const backToTeam = `<a href="${url.pathname}">Back to team access</a>`;
+          if (url.searchParams.get('history') === 'roles') {
+            const changes = await workspaces.workspaceMemberRoleHistory(actor, workspace.id);
+            const events = changes.map(change => {
+              const time = new Date(change.changed_at).toISOString();
+              return `<li><code>${escapeHtml(change.actor_id)}</code> changed from ${escapeHtml(change.previous_role)} to
+${escapeHtml(change.new_role)} by <code>${escapeHtml(change.changed_by)}</code> · <time datetime="${time}">${time}</time></li>`;
+            });
+            return page(backToTeam + '<h2>Role change history</h2>' + (events.length
+              ? '<p>Showing up to 50 recent changes.</p><ol>' + events.join('') + '</ol>' : '<p>No role changes recorded.</p>'));
+          }
+          if (url.searchParams.has('edit-role')) {
+            const target = team.find(member => member.actor_id === url.searchParams.get('edit-role')
+              && !member.revoked_at && ['editor', 'viewer'].includes(member.role));
+            if (!target) return page(backToTeam + '<h2>This account is no longer eligible for a role change</h2>', 409);
+            const next = target.role === 'viewer' ? 'editor' : 'viewer';
+            return page(backToTeam + `<h2>Change workspace role</h2>
+<p>Change <code>${escapeHtml(target.actor_id)}</code> from ${escapeHtml(target.role)} to ${next}.</p>
+<form method="post" action="${url.pathname}">
+<input type="hidden" name="member" value="${escapeHtml(target.actor_id)}">
+<input type="hidden" name="previous" value="${escapeHtml(target.role)}">
+<button name="changeRole" value="yes">Change role to ${next}</button></form>`);
+          }
           if (url.searchParams.has('revoke')) {
             const target = team.find(member => member.actor_id === url.searchParams.get('revoke')
               && !member.revoked_at && member.role !== 'owner');
@@ -415,8 +450,9 @@ ${escapeHtml(workspace.name)}. Earlier work will retain its attribution.</p>
           }
           const rows = team.map(member => `<tr><td><code>${escapeHtml(member.actor_id)}</code></td>
 <td>${escapeHtml(member.role)}</td><td>${member.revoked_at
-  ? 'Revoked ' + escapeHtml(new Date(member.revoked_at).toISOString()) : 'Active'}${!member.revoked_at && member.role !== 'owner' ? `<a href="${url.pathname}?revoke=${encodeURIComponent(member.actor_id)}" aria-label="Revoke access for ${escapeHtml(member.actor_id)}">Revoke access</a>` : ''}</td></tr>`).join('');
-          return page(backToWorkspace + `<h2>Team access for ${escapeHtml(workspace.name)}</h2><p><a href="${url.pathname}/grant">Grant access</a></p><p><a href="/workspaces/${workspace.id}/settings/audit?view=access">Access revocation history</a></p>
+  ? 'Revoked ' + escapeHtml(new Date(member.revoked_at).toISOString()) : 'Active'}${!member.revoked_at && member.role !== 'owner' ? ` <a href="${url.pathname}?revoke=${encodeURIComponent(member.actor_id)}" aria-label="Revoke access for ${escapeHtml(member.actor_id)}">Revoke access</a>
+<a href="${url.pathname}?edit-role=${encodeURIComponent(member.actor_id)}" aria-label="Change role for ${escapeHtml(member.actor_id)}">Change role</a>` : ''}</td></tr>`).join('');
+          return page(backToWorkspace + `<h2>Team access for ${escapeHtml(workspace.name)}</h2><p><a href="${url.pathname}/grant">Grant access</a></p><p><a href="/workspaces/${workspace.id}/settings/audit?view=access">Access revocation history</a> · <a href="${url.pathname}?history=roles">Role change history</a></p>
 <table class="team-table"><caption>Workspace memberships</caption><thead><tr>
 <th scope="col">Account ID</th><th scope="col">Role</th><th scope="col">Access</th>
 </tr></thead><tbody>${rows}</tbody></table>`);

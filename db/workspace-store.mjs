@@ -134,6 +134,20 @@ export function workspaceStore(pool) {
         await client.query('SELECT alchemy.grant_workspace_member($1, $2, $3) AS granted', [workspaceId, memberId, role])
       ).rows[0].granted);
     },
+    changeWorkspaceMemberRole(actorId, workspaceId, memberId, previousRole, nextRole) {
+      requireId(workspaceId, 'Workspace');
+      requireId(memberId, 'Member');
+      return asActor(actorId, async client => (
+        await client.query('SELECT alchemy.change_workspace_member_role($1, $2, $3, $4) AS changed',
+          [workspaceId, memberId, previousRole, nextRole])
+      ).rows[0].changed);
+    },
+    workspaceMemberRoleHistory(actorId, workspaceId) {
+      requireId(workspaceId, 'Workspace');
+      return asActor(actorId, async client => (
+        await client.query('SELECT * FROM alchemy.workspace_member_role_history($1)', [workspaceId])
+      ).rows);
+    },
     revokeWorkspaceMember(actorId, workspaceId, memberId) {
       requireId(workspaceId, 'Workspace');
       requireId(memberId, 'Member');
