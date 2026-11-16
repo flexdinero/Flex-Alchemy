@@ -1080,7 +1080,9 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
             const history = await workspaces.releaseEnvironmentHistory(actor, workspaceId, projectId, environment);
             const current = history[0];
             const items = history.map(event => `<li><strong>${event.operation === 'rollback' ? 'Rollback selection' : 'Promotion selection'}</strong>
-· <a href="${releasePath}?candidate=${event.candidate_id}">Candidate</a> · ${new Date(event.activated_at).toISOString()}
+· <time datetime="${new Date(event.activated_at).toISOString()}">${new Date(event.activated_at).toISOString()}</time>
+<p>From ${event.previous_candidate_id ? `<a href="${releasePath}?candidate=${event.previous_candidate_id}">previous candidate <code>${event.previous_candidate_id}</code></a>` : 'no selection'}</p>
+<p>To <a href="${releasePath}?candidate=${event.candidate_id}">selected candidate <code>${event.candidate_id}</code></a></p>
 <p class="preserve">${escapeHtml(event.reason)}</p><p>Selected by <code>${event.activated_by}</code></p></li>`);
             return page(back + `<h2>${environment} release selection</h2><p>This page records the selected release artifact. The deployment provider reports what is running.</p>
 ${current ? `<p><a href="${releasePath}?candidate=${current.candidate_id}">Open currently selected candidate</a></p><h3>Selection history</h3><ol>${items.join('')}</ol>`
@@ -1186,6 +1188,7 @@ ${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
 <p class="preserve">${escapeHtml(candidate.reason)}</p>
 <p><a href="${escapeHtml(repository + '&archive=runs&run=' + candidate.run_id)}">View Node test evidence</a> ·
 <a href="${escapeHtml(repository + '&archive=download')}">Download candidate archive</a></p>
+<p><a href="${releasePath}?environment=staging">Staging selection history</a> · <a href="${releasePath}?environment=production">Production selection history</a></p>
 <h3>Environment decisions</h3>${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
 ${records.length ? '<ol>' + records.join('') + '</ol>' : '<p>No environment decisions recorded.</p>'}${forms.join('')}${selections.join('')}`, status);
             };

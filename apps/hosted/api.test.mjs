@@ -541,6 +541,11 @@ test('hosted intake derives identity from a real expiring database session', asy
       const history = await visit(selectionPath, viewerHeaders);
       assert.match(history.body, /Rollback selection/);
       assert.ok(history.body.includes('candidate=' + firstCandidateId + '">Open currently selected candidate'));
+      assert.ok(history.body.includes('candidate=' + secondCandidateId + '">previous candidate'));
+      assert.ok(history.body.includes('candidate=' + firstCandidateId + '">selected candidate'));
+      assert.match(history.body, /From no selection/);
+      assert.match((await visit(candidatePath, viewerHeaders)).body, /environment=staging">Staging selection history/);
+      assert.equal((await request(selectionPath, outsider)).status, 404);
       assert.equal((await visit(releases + '?environment=production', releaseOwner, select(firstCandidateId, '', 'promote'))).status, 409);
       assert.equal((await visit(approvers, releaseOwner, 'action=revoke&grant=' + scoped.staging)).status, 303);
       assert.doesNotMatch((await visit(secondCandidate.headers.location, releaseOwner)).body, /Select for rollback/);

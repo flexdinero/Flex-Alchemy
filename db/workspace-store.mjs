@@ -125,9 +125,14 @@ export function workspaceStore(pool) {
     },
     releaseEnvironmentHistory(actorId, workspaceId, projectId, environment) {
       return asActor(actorId, async client => (
-        await client.query(`SELECT id, candidate_id, operation, activated_at, activated_by, reason
-          FROM alchemy.release_environment_activations WHERE workspace_id = $1 AND project_id = $2 AND environment = $3
-          ORDER BY sequence DESC LIMIT 50`, [workspaceId, projectId, environment])
+        await client.query(`SELECT event.candidate_id, event.operation, event.activated_at, event.activated_by, event.reason,
+          previous.candidate_id AS previous_candidate_id
+          FROM alchemy.release_environment_activations event
+          LEFT JOIN alchemy.release_environment_activations previous ON previous.id = event.previous_id
+            AND previous.workspace_id = event.workspace_id AND previous.project_id = event.project_id
+            AND previous.environment = event.environment
+          WHERE event.workspace_id = $1 AND event.project_id = $2 AND event.environment = $3
+          ORDER BY event.sequence DESC LIMIT 50`, [workspaceId, projectId, environment])
       ).rows);
     },
     activateReleaseEnvironment(actorId, workspaceId, projectId, environment, candidateId, previousId, operation, reason) {
