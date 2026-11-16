@@ -7,7 +7,8 @@ test('sessions resolve an actor until expiry or revocation', async () => {
   const db = new PGlite();
   try {
     for (const name of ['001_workspace_boundary.sql', '002_actor_identity.sql', '003_sessions.sql',
-      '004_login_attempts.sql', '005_identity_cleanup.sql', '029_revoke_other_sessions.sql']) {
+      '004_login_attempts.sql', '005_identity_cleanup.sql', '029_revoke_other_sessions.sql',
+      '042_account_appearance.sql']) {
       await db.exec(await readFile(new URL('./migrations/' + name, import.meta.url), 'utf8'));
     }
     await db.exec('SET ROLE alchemy_identity');
