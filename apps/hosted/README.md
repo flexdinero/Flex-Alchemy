@@ -12,6 +12,8 @@ After migration 034, Owners and Editors can use **Save file to project** to stor
 
 After migration 035, Owners and Editors can open **Repository archive** on a recorded revision and import its GitHub-generated tar.gz, up to 8 MiB compressed. Workspace members can download the saved bytes and view their SHA-256 digest. Import stores the compressed archive and does not extract it. GitHub archive behavior controls which content is included, so Git history and submodule content require separate handling.
 
+After migration 037, workspace owners can use **Prepare release candidate** on a passing Node run. The app stores the run, pinned archive digest, author, and rationale. Workspace members can open the record from **Releases** and download the same archive. Environment approval and deployment are separate stages.
+
 New imports stream through gzip integrity verification, enforce a 64 MiB expanded-size limit, and check the tar envelope and archived Git commit identifier before saving. These checks establish archive provenance and bounds. File-by-file extraction and execution require a separate worker.
 
 **Download file inventory (JSON)** reads the stored archive in memory and reports entry paths, types, sizes, and SHA-256 digests for regular files. The inventory includes the pinned commit and stored archive digest, rejects duplicate or unsafe paths, and is limited to 10,000 entries.

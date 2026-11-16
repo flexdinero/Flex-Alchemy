@@ -199,6 +199,7 @@ test('hosted intake derives identity from a real expiring database session', asy
     await db.exec(await readFile(new URL('../../db/migrations/034_project_source_files.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/035_project_source_archives.sql', import.meta.url), 'utf8'));
     await db.exec(await readFile(new URL('../../db/migrations/036_archive_test_runs.sql', import.meta.url), 'utf8'));
+    await db.exec(await readFile(new URL('../../db/migrations/037_archive_release_candidates.sql', import.meta.url), 'utf8'));
     const knowledgePath = workspacePath + '/knowledge';
     const knowledge = await request(knowledgePath + '?q=K12', viewer);
     assert.equal(knowledge.status, 200);
@@ -394,6 +395,34 @@ test('hosted intake derives identity from a real expiring database session', asy
       const runPath = runsPath + '&run=' + runId;
       assert.match((await visit(runPath, viewerHeaders)).body, /&quot;exitCode&quot;: 1/);
       assert.equal((await visit(runPath, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
+      const releases = projectPage + '/releases';
+      const releaseOwner = { ...reviewerForm, Cookie: '__Host-alchemy_session=' + owner };
+      assert.match((await visit(releases, viewerHeaders)).body, /No release candidates/);
+      assert.equal((await visit(releases + '?from=' + runId, releaseOwner)).status, 409);
+      const nextRun = (await visit(runsPath, reviewerForm)).body.match(/name="submission" value="([^"]+)"/)[1];
+      assert.equal((await visit(runsPath, reviewerForm, 'submission=' + nextRun)).status, 303);
+      const archiveDigest = createHash('sha256').update(githubArchive).digest('hex');
+      await db.exec('SET ROLE alchemy_run_client');
+      try {
+        const { rows: [claimed] } = await db.query('SELECT * FROM alchemy.claim_archive_test_run()');
+        assert.equal(claimed.id, nextRun);
+        const result = { status: 'finished', exitCode: 0, commit: githubCommit, archiveSha256: archiveDigest };
+        assert.equal((await db.query('SELECT alchemy.finish_archive_test_run($1,$2,$3) AS recorded',
+          [nextRun, claimed.lease_token, JSON.stringify(result)])).rows[0].recorded, true);
+      } finally {
+        await db.exec('RESET ROLE');
+      }
+      const candidateForm = releases + '?from=' + nextRun;
+      assert.match((await visit(runsPath + '&run=' + nextRun, releaseOwner)).body, /Prepare release candidate/);
+      assert.equal((await visit(candidateForm, reviewerForm)).status, 403);
+      assert.match((await visit(candidateForm, releaseOwner)).body, /Review Node test evidence/);
+      assert.equal((await visit(candidateForm, releaseOwner, 'digest=old&reason=Ready')).status, 409);
+      const rationale = new URLSearchParams({ digest: archiveDigest, reason: 'Release <first> candidate' }).toString();
+      const savedCandidate = await visit(candidateForm, releaseOwner, rationale);
+      assert.equal(savedCandidate.status, 303);
+      assert.match((await visit(savedCandidate.headers.location, viewerHeaders)).body, /Release &lt;first&gt; candidate/);
+      assert.equal((await visit(savedCandidate.headers.location, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);
+      assert.equal((await visit(candidateForm, releaseOwner, rationale)).headers.location, releases);
       assert.equal((await visit(previewPath + '&directory=missing', viewerHeaders)).status, 404);
       assert.match((await visit(reviewPage, headers)).body, /Awaiting review/);
       assert.equal((await visit(reviewPage, { ...headers, Cookie: '__Host-alchemy_session=' + outsider })).status, 404);

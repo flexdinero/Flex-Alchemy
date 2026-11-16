@@ -21,7 +21,7 @@ const repositoryPreview = (path, name, commit, directory = '', offset = 0) => pa
   + new URLSearchParams({ repository: name, commit, ...(directory ? { directory } : {}), ...(offset ? { offset: String(offset) } : {}) });
 const repositoryFilePreview = (path, name, commit, directory, file, offset) =>
   repositoryPreview(path, name, commit, directory, offset) + '&' + new URLSearchParams({ file });
-const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions|/repository)?$');
+const projectRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')(/export|/evidence|/reviews|/plans|/decisions|/edit|/delete|/missions/new|/missions|/repository|/releases)?$');
 const missions = new RegExp('^/api/workspaces/(' + id + ')/projects/(' + id + ')/missions$');
 const reviewRoute = new RegExp('^/workspaces/(' + id + ')/projects/(' + id + ')/missions/(' + id + ')(/export|/sources|/verification|/revise|/plan)?$');
 const decisionLabel = decision => decision === 'accepted' ? 'Accepted by reviewer' : 'Changes requested';
@@ -84,7 +84,7 @@ ${signedIn ? link('/account', 'Account') : ''}${link('/access-help', 'Access hel
 
 function projectNavigation(path, project) {
   const destinations = [
-    ['', 'Overview'], ['/missions', 'Missions'], ['/plans', 'Plans'], ['/decisions', 'Plan decisions'], ['/reviews', 'Pending reviews'], ['/evidence', 'Evidence'], ['/repository', 'Repository'],
+    ['', 'Overview'], ['/missions', 'Missions'], ['/plans', 'Plans'], ['/decisions', 'Plan decisions'], ['/reviews', 'Pending reviews'], ['/evidence', 'Evidence'], ['/repository', 'Repository'], ['/releases', 'Releases'],
   ];
   const activePath = path.startsWith(project.path + '/missions/') ? project.path + '/missions' : path;
   const links = destinations.map(([suffix, label]) => {
@@ -895,6 +895,52 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
         if (!project) return page('<a href="/">All workspaces</a><h2>Project unavailable</h2>', 404);
         navigationWorkspace = { id: workspaceId, role: project.role };
         navigationProject = { path: `/workspaces/${workspaceId}/projects/${projectId}`, name: project.name };
+        if (action === '/releases') {
+          const releasePath = url.pathname;
+          const back = `<a href="${releasePath}">Back to release candidates</a>`;
+          const sourceLink = release => repositoryPreview(navigationProject.path + '/repository',
+            release.owner_name + '/' + release.repository_name, release.commit_sha);
+          const runId = url.searchParams.get('from');
+          if (request.method === 'POST' || runId !== null) {
+            if (project.role !== 'owner') return page(back + '<h2>Only workspace owners can prepare release candidates</h2>', 403);
+            if (!accountIdPattern.test(runId ?? '')) return page(back + '<h2>Invalid release candidate source</h2>', 400);
+            const run = await workspaces.eligibleArchiveReleaseRun(actor, workspaceId, projectId, runId);
+            if (!run) return page(back + '<h2>A verified passing archive run is required</h2>', 409);
+            const render = (reason = '', error = '', status = 200) => page(back + `<h2>Prepare a release candidate</h2>
+<p>Commit <code>${run.commit_sha}</code> · Archive SHA-256 <code>${run.archive_sha256}</code></p>
+<p><a href="${escapeHtml(sourceLink(run) + '&archive=runs&run=' + run.id)}">Review Node test evidence</a></p>
+${error ? `<p role="alert">${escapeHtml(error)}</p>` : ''}
+<form method="post"><input type="hidden" name="digest" value="${run.archive_sha256}">
+<label for="release-reason">Release rationale</label><textarea id="release-reason" name="reason" required maxlength="1000">${escapeHtml(reason)}</textarea>
+<button>Save release candidate</button></form>`, status);
+            if (request.method === 'GET') return render();
+            if (request.headers.get('content-type')?.split(';')[0] !== 'application/x-www-form-urlencoded') return render('', 'Submit the release candidate form.', 415);
+            const form = new URLSearchParams(await request.text());
+            const reason = (form.get('reason') ?? '').trim().slice(0, 1001);
+            if (form.size !== 2 || !reason || reason.length > 1000) return render(reason, 'Enter a release rationale of 1 to 1000 characters.', 400);
+            if (form.get('digest') !== run.archive_sha256) return render(reason, 'The archive digest changed. Verify the new digest before continuing.', 409);
+            const candidate = await workspaces.proposeArchiveRelease(actor, workspaceId, projectId, run.id, run.archive_sha256, reason);
+            return new Response(null, { status: 303, headers: { Location: candidate ? releasePath + '?candidate=' + candidate.id : releasePath,
+              'Cache-Control': 'no-store' } });
+          }
+          const selected = url.searchParams.get('candidate');
+          if (selected !== null && !accountIdPattern.test(selected)) return page(back + '<h2>Invalid release candidate address</h2>', 400);
+          const candidates = await workspaces.archiveReleaseCandidates(actor, workspaceId, projectId, selected);
+          if (selected !== null) {
+            const [candidate] = candidates;
+            if (!candidate) return page(back + '<h2>Release candidate unavailable</h2>', 404);
+            const repository = sourceLink(candidate);
+            return page(back + `<h2>Release candidate</h2><p>Proposed ${new Date(candidate.proposed_at).toISOString()} by <code>${candidate.proposed_by}</code></p>
+<p>Commit <code>${candidate.commit_sha}</code> · Archive SHA-256 <code>${candidate.archive_sha256}</code></p>
+<p class="preserve">${escapeHtml(candidate.reason)}</p>
+<p><a href="${escapeHtml(repository + '&archive=runs&run=' + candidate.run_id)}">View Node test evidence</a> ·
+<a href="${escapeHtml(repository + '&archive=download')}">Download candidate archive</a></p>`);
+          }
+          const items = candidates.map(candidate => `<li><a href="${releasePath}?candidate=${candidate.id}">Candidate for <code>${candidate.commit_sha}</code></a>
+· ${new Date(candidate.proposed_at).toISOString()}</li>`);
+          return page(`<h2>Release candidates</h2>${items.length ? '<ol>' + items.join('') + '</ol>' :
+            `<p>No release candidates. Prepare one from a passing run in <a href="${navigationProject.path}/repository">Repository</a>.</p>`}`);
+        }
         if (action === '/repository') {
           const writable = ['owner', 'editor'].includes(project.role);
           if (request.method === 'GET' && url.searchParams.get('saved') === 'files') {
@@ -963,10 +1009,14 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
                 const headline = run => `<strong>${escapeHtml(run.state)}</strong> · ${new Date(run.requested_at).toISOString()}`;
                 if (runId !== null) {
                   const [run] = runs;
+                  const candidateLink = project.role === 'owner' && run.state === 'finished' &&
+                    run.result?.status === 'finished' && run.result?.exitCode === 0 &&
+                    run.result?.commit === source.commit && run.result?.archiveSha256 === saved.archive_sha256
+                    ? `<p><a href="${navigationProject.path}/releases?from=${run.id}">Prepare release candidate</a></p>` : '';
                   return page(`<a href="${escapeHtml(runsUrl)}">Back to Node test runs</a><h2>Node test run</h2>
 <p>${headline(run)}</p><p>Requested by <code>${escapeHtml(run.requested_by)}</code></p>
 ${run.result ? `<p>Runner result</p><pre>${escapeHtml(JSON.stringify(run.result, null, 2))}</pre>`
-  : '<p>Refresh for the latest state.</p>'}`);
+  : '<p>Refresh for the latest state.</p>'}${candidateLink}`);
                 }
                 const active = runs.some(run => ['queued', 'running'].includes(run.state));
                 const items = runs.map(run => `<li><a href="${escapeHtml(runsUrl + '&run=' + run.id)}">${headline(run)}</a></li>`);

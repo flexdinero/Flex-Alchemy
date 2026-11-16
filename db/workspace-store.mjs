@@ -64,6 +64,33 @@ export function workspaceStore(pool) {
   }
 
   return {
+    archiveReleaseCandidates(actorId, workspaceId, projectId, candidateId = null) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT c.id, c.run_id, c.archive_sha256, c.proposed_by, c.proposed_at, c.reason,
+          r.owner_name, r.repository_name, r.commit_sha
+          FROM alchemy.archive_release_candidates c JOIN alchemy.archive_test_runs r ON r.id = c.run_id
+          WHERE c.workspace_id = $1 AND c.project_id = $2 AND ($3::uuid IS NULL OR c.id = $3)
+          ORDER BY c.proposed_at DESC, c.id LIMIT 50`, [workspaceId, projectId, candidateId])
+      ).rows);
+    },
+    eligibleArchiveReleaseRun(actorId, workspaceId, projectId, runId) {
+      return asActor(actorId, async client => (
+        await client.query(`SELECT r.id, r.owner_name, r.repository_name, r.commit_sha, a.archive_sha256
+          FROM alchemy.archive_test_runs r JOIN alchemy.project_source_archives a
+            USING (workspace_id, project_id, owner_name, repository_name, commit_sha)
+          WHERE r.workspace_id = $1 AND r.project_id = $2 AND r.id = $3
+            AND r.state = 'finished' AND r.result->>'status' = 'finished' AND r.result->'exitCode' = '0'::jsonb
+            AND r.result->>'commit' = r.commit_sha AND r.result->>'archiveSha256' = a.archive_sha256`,
+        [workspaceId, projectId, runId])
+      ).rows[0] ?? null);
+    },
+    proposeArchiveRelease(actorId, workspaceId, projectId, run, expectedDigest, reason) {
+      return asActor(actorId, async client => (
+        await client.query(`INSERT INTO alchemy.archive_release_candidates (workspace_id, project_id, run_id, archive_sha256, proposed_by, reason)
+          VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (run_id) DO NOTHING RETURNING id`,
+        [workspaceId, projectId, run, expectedDigest, actorId, reason])
+      ).rows[0] ?? null);
+    },
     archiveTestRuns(actorId, workspaceId, projectId, source, runId = null) {
       return asActor(actorId, async client => (
         await client.query(`SELECT id, state, requested_by, requested_at, finished_at${runId ? ', result' : ''}
