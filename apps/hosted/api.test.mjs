@@ -24,7 +24,21 @@ test('hosted intake derives identity from a real expiring database session', asy
   const githubBlob = createHash('sha1').update('blob ' + githubFile.length + '\0').update(githubFile).digest('hex');
   let alterGitHubBlob = false;
   let invalidArchiveRedirect = false;
-  const githubArchive = gzipSync(Buffer.alloc(1024));
+  function archiveFor(commit) {
+    const tar = Buffer.alloc(2048);
+    const metadata = '52 comment=' + commit + '\n';
+    tar.write('pax_global_header');
+    tar.write(metadata.length.toString(8).padStart(11, '0'), 124);
+    tar.fill(32, 148, 156);
+    tar.write('g', 156);
+    tar.write('ustar', 257);
+    const checksum = tar.subarray(0, 512).reduce((sum, byte) => sum + byte, 0);
+    tar.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148);
+    tar.write(metadata, 512);
+    return gzipSync(tar);
+  }
+  const githubArchive = archiveFor(githubCommit);
+  let archiveResponse = githubArchive;
   const archiveLocation = 'https://codeload.github.com/octocat/Hello-World/legacy.tar.gz/' + githubCommit;
   const handle = hostedApi({ pool, publicOrigin, async githubRequest(url, options) {
     githubCalls++;
@@ -33,7 +47,7 @@ test('hosted intake derives identity from a real expiring database session', asy
       return new Response(null, { status: 302, headers: { Location: invalidArchiveRedirect ? 'https://example.org/archive' : archiveLocation } });
     }
     assert.equal(options.redirect, 'error');
-    if (url === archiveLocation) return new Response(githubArchive);
+    if (url === archiveLocation) return new Response(archiveResponse);
     const base = 'https://api.github.com/repos/octocat/hello-world/git/';
     if (url === base + 'trees/' + githubTree) {
       return Response.json({ sha: githubTree, tree: [{ path: 'src', type: 'tree', sha: githubNestedTree }] });
@@ -300,6 +314,12 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal((await visit(archiveView, reviewerForm, 'confirm=import')).status, 503);
       assert.equal(githubCalls, callsBeforeImport + 1);
       invalidArchiveRedirect = false;
+      archiveResponse = archiveFor('f'.repeat(40));
+      assert.match((await visit(archiveView, reviewerForm, 'confirm=import')).body, /could not be matched to the recorded commit/);
+      archiveResponse = githubArchive.subarray(0, githubArchive.length - 4);
+      assert.match((await visit(archiveView, reviewerForm, 'confirm=import')).body, /valid compressed tar envelope/);
+      assert.equal((await visit(archiveDownload, viewerHeaders)).status, 404);
+      archiveResponse = githubArchive;
       assert.equal((await visit(archiveView, reviewerForm, 'confirm=import')).status, 303);
       const callsAfterImport = githubCalls;
       assert.equal((await visit(archiveView, reviewerForm, 'confirm=import')).status, 303);

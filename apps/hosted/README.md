@@ -12,6 +12,8 @@ After migration 034, Owners and Editors can use **Save file to project** to stor
 
 After migration 035, Owners and Editors can open **Repository archive** on a recorded revision and import its GitHub-generated tar.gz, up to 8 MiB compressed. Workspace members can download the saved bytes and view their SHA-256 digest. Import stores the compressed archive and does not extract it. GitHub archive behavior controls which content is included, so Git history and submodule content require separate handling.
 
+New imports stream through gzip integrity verification, enforce a 64 MiB expanded-size limit, and check the tar envelope and archived Git commit identifier before saving. These checks establish archive provenance and bounds. File-by-file extraction and execution require a separate worker.
+
 With migration 029 applied, **Sign out of other Flex Alchemy sessions** revokes the account's other app sessions and keeps the current browser signed in. Provider-managed sessions are controlled through the identity provider.
 
 Workspace members can open **Recent activity** for the latest 50 recorded mission creations and review decisions. Each entry links to its mission. Earlier missions without a recorded creation timestamp still show their recorded reviews.

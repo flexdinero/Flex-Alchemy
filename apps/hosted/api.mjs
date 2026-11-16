@@ -955,7 +955,9 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
                   if (imported.status !== 'verified') {
                     const outcomes = {
                       missing: [422, 'GitHub could not find an archive for this commit.'],
-                      'too-large': [422, 'The compressed archive exceeds the 8 MiB import limit.'],
+                      'too-large': [422, 'The archive exceeds 8 MiB compressed or 64 MiB expanded.'],
+                      'invalid-archive': [422, 'GitHub did not return a valid compressed tar envelope.'],
+                      'wrong-revision': [422, 'The archive could not be matched to the recorded commit.'],
                       unavailable: [503, 'GitHub did not provide a usable archive. Try again shortly.'],
                     };
                     const [status, message] = outcomes[imported.status];
@@ -968,7 +970,7 @@ ${canReview ? `<section><h3>Record a decision</h3><p><a href="${url.pathname}/re
               return page(back + `<h2>Repository archive</h2><p>${escapeHtml(canonicalName)} · <code>${source.commit}</code></p>
 ${saved ? `<p>Imported ${saved.size} bytes on ${new Date(saved.recorded_at).toISOString()} by <code>${saved.recorded_by}</code>.</p>
 <p>SHA-256 <code>${saved.archive_sha256}</code></p><p><a href="${escapeHtml(archiveUrl + '&archive=download')}">Download saved archive</a></p>`
-  : `<p>No archive is saved for this revision.</p>${writable ? '<p>Import the GitHub source archive for this commit, up to 8 MiB compressed.</p><form method="post"><button name="confirm" value="import">Import repository archive</button></form>' : ''}`}`);
+  : `<p>No archive is saved for this revision.</p>${writable ? '<p>Import the GitHub source archive for this commit, up to 8 MiB compressed and 64 MiB expanded.</p><form method="post"><button name="confirm" value="import">Import repository archive</button></form>' : ''}`}`);
             }
             if (request.method === 'POST' && (!file || !writable)) {
               return page(back + '<h2>Only workspace Owners and Editors can save source files</h2>', 403);

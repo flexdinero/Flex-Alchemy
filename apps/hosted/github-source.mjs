@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { verifyArchiveEnvelope } from './archive-verification.mjs';
 
 const fullSha = /^[a-f0-9]{40}$/;
 const filePreviewLimit = 65_536;
@@ -129,6 +130,8 @@ export async function readGitHubArchive({ owner, repository, commit }, request =
     }
     const bytes = Buffer.concat(chunks, size);
     if (size < 18 || bytes[0] !== 0x1f || bytes[1] !== 0x8b || bytes[2] !== 8) return { status: 'unavailable' };
+    const verification = await verifyArchiveEnvelope(bytes, commit);
+    if (verification !== 'verified') return { status: verification };
     return { status: 'verified', bytes };
   } catch {
     return { status: 'unavailable' };
