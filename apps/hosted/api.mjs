@@ -1572,11 +1572,11 @@ ${items ? '<ol>' + items + '</ol>' : '<p>No current work plans are awaiting a de
         if (action === '/plans') {
           if (request.method !== 'GET') return reply(405, { error: 'Use GET to view work plans' }, { Allow: 'GET' });
           const plans = await workspaces.projectPlans(actor, workspaceId, projectId);
-          const items = plans.map(plan => `<li><a href="${navigationProject.path}/missions/${plan.id}/plan">${escapeHtml(plan.title)}</a>
+          const items = plans.map(plan => `<li><a href="${navigationProject.path}/missions/${plan.id}/plan?version=${plan.revision}-${plan.version}">${escapeHtml(plan.title)}</a>
  · Revision ${plan.revision}, plan version ${plan.version}
  · ${plan.revision === plan.current_revision ? 'Current revision' : 'Historical plan. Current revision has no plan.'} · ${plan.decision === 'approved' ? 'Approved' : plan.decision === 'denied' ? 'Denied' : plan.decision === 'withdrawn' ? 'Approval withdrawn' : 'Awaiting owner decision'}</li>`).join('');
           return page(`<h2>Work plans for ${escapeHtml(project.name)}</h2>
-${items ? '<ul>' + items + '</ul>' : '<p>No work plans recorded. Open a mission to view or create its plan.</p>'}`);
+${items ? '<ul>' + items + '</ul>' : '<p>No work plans recorded. <a href="' + navigationProject.path + '/missions">Browse project missions</a> to find a mission plan.</p>'}`);
         }
         if (action === '/reviews') {
           if (request.method !== 'GET') return reply(405, { error: 'Use GET to view pending reviews' }, { Allow: 'GET' });

@@ -915,7 +915,7 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.equal((await request(planPath + '?version=1-2', viewer)).status, 404);
       assert.equal((await request(planPath + '?version=1-1', outsider)).status, 404);
       const plansPage = await (await request(plansIndex, viewer)).text();
-      assert.ok(plansPage.includes('href="' + planPath + '"'));
+      assert.ok(plansPage.includes('href="' + planPath + '?version=1-1"'));
       assert.match(plansPage, /Revision 1, plan version 1/);
       assert.match(plansPage, /· Approved/);
       assert.match(await (await request(decisionQueue, viewer)).text(), /No current work plans are awaiting a decision/);
@@ -930,7 +930,10 @@ test('hosted intake derives identity from a real expiring database session', asy
       assert.match(pendingAfter, /Revision 2/);
       assert.match((await visit(planPath, viewerHeaders)).body, /Plan version 1\s*· Historical/);
       assert.equal((await visit(planPath, reviewerForm, 'revision=1&version=1&steps=Stale')).status, 409);
-      assert.match(await (await request(plansIndex, viewer)).text(), /Current revision has no plan/);
+      const historicalPlans = await (await request(plansIndex, viewer)).text();
+      assert.match(historicalPlans, /Current revision has no plan/);
+      assert.ok(historicalPlans.includes('href="' + planPath + '?version=1-1"'));
+      assert.doesNotMatch((await visit(planPath + '?version=1-1', viewerHeaders)).body, /New criteria/);
       assert.equal((await visit(planPath, ownerHeaders, planDecision)).status, 409);
       const revised = await visit(reviewPage, viewerHeaders);
       assert.match(revised.body, /Awaiting review/);
