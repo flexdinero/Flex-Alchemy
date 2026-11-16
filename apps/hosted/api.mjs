@@ -256,6 +256,7 @@ ${browserFlow ? `<p><a href="${escapeHtml(signInPath)}">Sign in</a></p>` : '<p>S
       if (request.method === 'GET' && url.pathname === '/access-help') {
         return page(`<a href="/">Back to Flex Alchemy</a><h2>Get workspace access</h2>
 <h3>Can't sign in?</h3><p>Use your organization's sign-in provider to recover your account. If that fails, contact your organization's account administrator.</p>
+${browserFlow?.recoveryAvailable ? '<p><a href="/forgot-password">Recover your account</a></p>' : ''}
 <h3>Signed in with no workspace?</h3><p>Ask a workspace owner or administrator to check your membership and confirm which account to use.</p>
 ${browserFlow ? '<p><a href="/auth/sign-in">Try signing in again</a></p>' : ''}`);
       }
@@ -284,7 +285,9 @@ ${message ? `<p role="alert">${escapeHtml(message)}</p>` : ''}
       }
       if (request.method === 'GET' && url.pathname === '/') {
         if (!actor) return page(browserFlow
-          ? `<h2>Direct work and review the evidence</h2><p>Use Flex Alchemy to define project missions, review decisions, and inspect saved source catalog checks.</p><p><a href="/auth/sign-in">Sign in</a></p><p><a href="/access-help">Get workspace access</a></p>`
+          ? `<h2>Direct work and review the evidence</h2><p>Use Flex Alchemy to define project missions, review decisions, and inspect saved source catalog checks.</p>
+<p><a href="/auth/sign-in">Sign in</a>${browserFlow.signupAvailable ? ' · <a href="/sign-up">Create an account</a>' : ''}</p>
+<p><a href="/access-help">Get workspace access</a></p>`
           : '<p>Sign-in is currently unavailable.</p>');
         const entries = await workspaces.listWorkspaces(actor);
         return page('<h2>Your workspaces</h2><p><a href="/workspaces/new">Create a workspace</a></p>' + (entries.length

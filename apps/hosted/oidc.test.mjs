@@ -17,10 +17,11 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
   const publicOrigin = 'https://alchemy.example';
   const config = new oidc.Configuration({
     issuer, authorization_endpoint: issuer + '/authorize', token_endpoint: issuer + '/token',
-    jwks_uri: issuer + '/jwks',
+    jwks_uri: issuer + '/jwks', prompt_values_supported: ['login', 'create'],
   }, 'alchemy-client', 'fixture-secret');
   const sessions = sessionStore(pool);
-  const browserFlow = oidcBrowserFlow({ config, sessions, publicOrigin });
+  const recoveryUrl = issuer + '/recover';
+  const browserFlow = oidcBrowserFlow({ config, sessions, publicOrigin, recoveryUrl });
   const handle = hostedApi({ pool, publicOrigin, browserFlow });
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   let challenge;
@@ -46,11 +47,12 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
     ), privateKey).toString('base64url');
     return Response.json({ access_token: 'fixture-access-token', token_type: 'Bearer', id_token: unsigned + '.' + signature });
   };
-  async function begin(path = '/auth/sign-in') {
+  async function begin(path = '/auth/sign-in', prompt = null) {
     const response = await handle(new Request(new URL(path, publicOrigin)));
     assert.equal(response.status, 303);
     const location = new URL(response.headers.get('location'));
     assert.equal(location.searchParams.has('return'), false);
+    assert.equal(location.searchParams.get('prompt'), prompt);
     assert.equal(location.searchParams.get('code_challenge_method'), 'S256');
     challenge = location.searchParams.get('code_challenge');
     nonce = location.searchParams.get('nonce');
@@ -69,15 +71,20 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
     const attempt = await begin();
     const entry = await handle(new Request(publicOrigin + '/'));
     assert.equal(entry.status, 200);
-    assert.match(await entry.text(), /href="\/auth\/sign-in"/);
+    const entryContent = await entry.text();
+    assert.match(entryContent, /href="\/auth\/sign-in"/);
+    assert.match(entryContent, /href="\/sign-up"/);
+    const recovery = await handle(new Request(publicOrigin + '/forgot-password?return=https://evil.example'));
+    assert.equal(recovery.status, 303);
+    assert.equal(recovery.headers.get('location'), recoveryUrl);
     const rejected = await callback(attempt, 'a'.repeat(43));
     assert.equal(rejected.status, 400);
     assert.match(rejected.headers.get('content-type'), /text\/html/);
     assert.equal(rejected.headers.get('referrer-policy'), 'no-referrer');
-    const recovery = await rejected.text();
-    assert.match(recovery, /href="\/auth\/sign-in"/);
-    assert.match(recovery, /href="\/access-help"/);
-    assert.doesNotMatch(recovery, /valid-code/);
+    const retryPage = await rejected.text();
+    assert.match(retryPage, /href="\/auth\/sign-in"/);
+    assert.match(retryPage, /href="\/access-help"/);
+    assert.doesNotMatch(retryPage, /valid-code/);
     assert.equal(exchanges, 0);
     const complete = await callback(attempt);
     assert.equal(complete.status, 303);
@@ -112,6 +119,13 @@ test('OIDC code flow binds browser state, PKCE and nonce before opening a sessio
     const invitationRedirect = await handle(new Request(publicOrigin + invitation));
     assert.equal(invitationRedirect.status, 303);
     assert.equal((await callback(await begin(invitationRedirect.headers.get('location')))).headers.get('location'), invitation);
+    const registration = await begin('/sign-up?' + new URLSearchParams({ return: invitation }), 'create');
+    assert.equal((await callback(registration)).headers.get('location'), invitation);
+    const unsupported = new oidc.Configuration({ issuer, authorization_endpoint: issuer + '/authorize',
+      token_endpoint: issuer + '/token', jwks_uri: issuer + '/jwks' }, 'alchemy-client', 'fixture-secret');
+    const unavailableFlow = oidcBrowserFlow({ config: unsupported, sessions, publicOrigin });
+    assert.equal(await unavailableFlow(new Request(publicOrigin + '/sign-up')), null);
+    assert.equal(await unavailableFlow(new Request(publicOrigin + '/forgot-password')), null);
     for (const returnPath of ['//evil.example', '//', '/\\evil.example', '/workspaces/../auth/sign-out', 'https://evil.example']) {
       const externalAttempt = await begin('/auth/sign-in?' + new URLSearchParams({ return: returnPath }));
       assert.equal((await callback(externalAttempt)).headers.get('location'), '/');

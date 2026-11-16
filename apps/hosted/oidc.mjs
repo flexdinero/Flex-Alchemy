@@ -29,23 +29,34 @@ const failure = () => new Response(`<!doctype html><html lang="en"><head><meta c
   },
 });
 
-export function oidcBrowserFlow({ config, sessions, publicOrigin }) {
+export function oidcBrowserFlow({ config, sessions, publicOrigin, recoveryUrl }) {
   const origin = new URL(publicOrigin);
   if (origin.protocol !== 'https:' || origin.origin !== publicOrigin) {
     throw new TypeError('OIDC requires a canonical HTTPS public origin');
   }
+  const prompts = config.serverMetadata().prompt_values_supported;
+  const signupAvailable = Array.isArray(prompts) && prompts.includes('create');
+  const recovery = recoveryUrl ? new URL(recoveryUrl) : null;
+  if (recovery && (recovery.protocol !== 'https:' || recovery.username || recovery.password)) {
+    throw new TypeError('OIDC recovery requires a trusted HTTPS URL without credentials');
+  }
   const redirectUri = publicOrigin + '/auth/callback';
   oidc.enableNonRepudiationChecks(config);
-  return async function handle(request) {
+  async function handle(request) {
     const url = new URL(request.url);
     if (url.origin !== publicOrigin || request.method !== 'GET') return null;
-    if (url.pathname === '/auth/sign-in') {
+    if (url.pathname === '/forgot-password' && recovery) return new Response(null, { status: 303, headers: {
+      Location: recovery.href, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+    } });
+    const signup = url.pathname === '/sign-up';
+    if (url.pathname === '/auth/sign-in' || (signup && signupAvailable)) {
       const state = oidc.randomState();
       const nonce = oidc.randomNonce();
       const verifier = oidc.randomPKCECodeVerifier();
       const location = oidc.buildAuthorizationUrl(config, {
         redirect_uri: redirectUri, scope: 'openid', state, nonce,
         code_challenge: await oidc.calculatePKCECodeChallenge(verifier), code_challenge_method: 'S256',
+        ...(signup ? { prompt: 'create' } : {}),
       });
       const returnPath = url.searchParams.getAll('return').length === 1
         ? returnDestination(url.searchParams.get('return'), publicOrigin) : '/';
@@ -77,14 +88,15 @@ export function oidcBrowserFlow({ config, sessions, publicOrigin }) {
     } catch {
       return failure();
     }
-  };
+  }
+  return Object.assign(handle, { signupAvailable, recoveryAvailable: Boolean(recovery) });
 }
 
-export async function discoverBrowserFlow({ issuer, clientId, clientSecret, sessions, publicOrigin }) {
+export async function discoverBrowserFlow({ issuer, clientId, clientSecret, sessions, publicOrigin, recoveryUrl }) {
   const issuerUrl = new URL(issuer);
   if (issuerUrl.protocol !== 'https:' || !clientId || !clientSecret) {
     throw new TypeError('Configure an HTTPS issuer and confidential OIDC client');
   }
   const config = await oidc.discovery(issuerUrl, clientId, clientSecret);
-  return oidcBrowserFlow({ config, sessions, publicOrigin });
+  return oidcBrowserFlow({ config, sessions, publicOrigin, recoveryUrl });
 }

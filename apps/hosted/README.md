@@ -56,8 +56,11 @@ Run `npm ci --ignore-scripts` and `npm run start:hosted` after configuring these
 | `ALCHEMY_PUBLIC_ORIGIN` | Canonical HTTPS origin, without a trailing slash |
 | `OIDC_ISSUER` | Configured HTTPS issuer |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Confidential client registration values |
+| `OIDC_RECOVERY_URL` | Optional HTTPS destination for the identity provider's account recovery page |
 | `PORT` | Loopback listener port, default 4174 |
 | `ALCHEMY_LISTEN_HOST` | Defaults to `127.0.0.1`. The container uses `0.0.0.0` within its network namespace |
+
+When OIDC discovery advertises `create` in `prompt_values_supported`, the home page offers **Create an account**. The provider owns registration and password recovery. A new account does not inherit invitations issued to another account ID.
 
 Run the TLS reverse proxy on the same host. Preserve the public Host header and proxy to the loopback listener. The application ignores forwarded host values. Have the founder sign in once, then provision their workspace using the procedure below.
 

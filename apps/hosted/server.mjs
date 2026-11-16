@@ -36,7 +36,7 @@ try {
   const sessions = sessionStore(pool);
   const browserFlow = await discoverBrowserFlow({
     issuer: OIDC_ISSUER, clientId: OIDC_CLIENT_ID, clientSecret: OIDC_CLIENT_SECRET,
-    sessions, publicOrigin,
+    sessions, publicOrigin, recoveryUrl: process.env.OIDC_RECOVERY_URL,
   });
   startupStage = 'HTTP setup';
   const api = hostedApi({ pool, publicOrigin, browserFlow, nodeRunsEnabled: process.env.ALCHEMY_NODE_RUNS_ENABLED === '1' });
