@@ -1,0 +1,54 @@
+services:
+  app:
+    build:
+      context: ..
+    image: flex-alchemy-hosted
+    env_file:
+      - ${ALCHEMY_RUNTIME_ENV_FILE:?Set the path to the hosted runtime environment file}
+    environment:
+      ALCHEMY_PUBLIC_ORIGIN: ${ALCHEMY_PUBLIC_ORIGIN:?Set the canonical HTTPS origin}
+      ALCHEMY_LISTEN_HOST: 0.0.0.0
+      PORT: "4174"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 35s
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          const host = new URL(process.env.ALCHEMY_PUBLIC_ORIGIN).host;
+          const request = require('node:http').get('http://127.0.0.1:4174/health/ready',
+            { headers: { Host: host }, timeout: 4000 }, response => {
+              response.resume();
+              process.exitCode = response.statusCode === 200 ? 0 : 1;
+            });
+          request.on('error', () => { process.exitCode = 1; });
+          request.on('timeout', () => request.destroy());
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      ALCHEMY_PUBLIC_ORIGIN: ${ALCHEMY_PUBLIC_ORIGIN:?Set the canonical HTTPS origin}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
