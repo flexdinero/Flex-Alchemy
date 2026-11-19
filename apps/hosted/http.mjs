@@ -15,6 +15,11 @@ export function hostedHttpServer({ handle, publicOrigin, checkReady }) {
     }
     try {
       const method = incoming.method;
+      if (method === 'GET' && incoming.url === '/health/live') {
+        outgoing.writeHead(200, { 'Content-Type': 'application/json' })
+          .end(JSON.stringify({ status: 'alive' }));
+        return;
+      }
       if (method === 'GET' && incoming.url === '/health/ready' && checkReady) {
         let ready = false;
         try { ready = await checkReady(); } catch { /* Dependency unavailable. */ }

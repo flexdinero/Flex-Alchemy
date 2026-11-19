@@ -167,6 +167,20 @@ try {
   const workspace = origin + created.location;
   assert.match((await exchange(workspace, cert, founder)).body, /OIDC staging workspace/);
   assert.equal((await exchange(workspace, cert, outsider)).status, 404);
+  psql("ALTER ROLE alchemy_smoke NOLOGIN; SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = 'alchemy_smoke';");
+  try {
+    const readiness = await exchange(origin + '/health/ready', cert);
+    assert.equal(readiness.status, 503);
+    assert.deepEqual(JSON.parse(readiness.body), { status: 'unavailable' });
+    const liveness = await exchange(origin + '/health/live', cert);
+    assert.equal(liveness.status, 200);
+    assert.deepEqual(JSON.parse(liveness.body), { status: 'alive' });
+  } finally {
+    psql('ALTER ROLE alchemy_smoke LOGIN');
+  }
+  await eventually(async () => (await exchange(origin + '/health/ready', cert)).status === 200, 'database access recovery');
+  assert.match((await exchange(workspace, cert, founder)).body, /OIDC staging workspace/);
+  console.log('HTTPS readiness reported database access loss and recovered while liveness stayed healthy.');
   assert.equal((await exchange(origin + '/sign-out', cert, founder, {})).status, 303);
   assert.equal((await exchange(workspace, cert, founder)).status, 303);
   console.log('TLS proxy, real Keycloak sign-in, workspace creation, tenant denial, and sign-out passed.');

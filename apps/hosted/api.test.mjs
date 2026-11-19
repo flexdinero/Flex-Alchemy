@@ -267,6 +267,10 @@ test('hosted intake derives identity from a real expiring database session', asy
       const unavailable = await visit('/health/ready', { Host: headers.Host });
       assert.equal(unavailable.status, 503);
       assert.deepEqual(JSON.parse(unavailable.body), { status: 'unavailable' });
+      const live = await visit('/health/live', { Host: headers.Host });
+      assert.equal(live.status, 200);
+      assert.equal(live.headers['cache-control'], 'no-store');
+      assert.deepEqual(JSON.parse(live.body), { status: 'alive' });
       databaseAvailable = true;
       const recovered = await visit('/health/ready', { Host: headers.Host });
       assert.equal(recovered.status, 200);

@@ -66,6 +66,7 @@ Routes below use W for the workspace path and P for the project path. Existing r
 | Release P/releases and P/releases/:id | Passing run or project navigation; proceed to operations | Record an archive release candidate and review its test evidence, digest, rationale, and download. Environment-scoped approval, deployment, health and rollback follow candidate creation | Retry deduplicates candidate creation; deployment failures identify recovery paths; rollback checks schema compatibility |
 | Environment selection P/releases?environment=staging or production | Releases or any saved candidate | View the current selection and follow both candidate links for each promotion or rollback. Owners can promote an approved candidate or select a previously active candidate for rollback | Recheck expiry, grant and membership, reject stale changes, and distinguish the selected artifact from deployed runtime state |
 | Operations P/operations and P/incidents/:id | Release, project or alert | Health, telemetry freshness, timeline, affected users, repair plan, approval, recovery check | Distinguish outage from monitoring loss; show pause, escalation and unresolved effects |
+| Hosted service probes /health/live and /health/ready | Supervisor or load balancer | Check process response and PostgreSQL reachability separately | A PostgreSQL access failure yields readiness HTTP 503 while the web process still reports liveness |
 
 ## Governance and support
 
